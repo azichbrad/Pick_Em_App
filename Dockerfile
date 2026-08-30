@@ -14,5 +14,5 @@ COPY src ./src
 # Build the standard app (NO production flag)
 RUN mvn clean package -DskipTests
 
-# Run the app with Render's dynamic port, using shell form to map the variable
-ENTRYPOINT sh -c "java -Dserver.port=${PORT:-8080} -jar target/*.jar"
+# Run the app with Render's dynamic port AND force IPv4 networking
+ENTRYPOINT sh -c "java -Dserver.port=${PORT:-8080} -Djava.net.preferIPv4Stack=true -jar target/*.jar"
