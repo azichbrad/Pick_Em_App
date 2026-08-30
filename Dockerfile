@@ -1,8 +1,8 @@
-# Single Stage: Both Build and Run
-FROM maven:3.9-eclipse-temurin-21
+# Stage 1: Build the Vaadin Production App
+FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /app
 
-# Install Node.js so Vaadin can serve the UI exactly like it does locally
+# Install Node.js (Required for Vaadin to bundle the frontend UI)
 RUN apt-get update && apt-get install -y curl \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
@@ -11,8 +11,18 @@ RUN apt-get update && apt-get install -y curl \
 COPY pom.xml .
 COPY src ./src
 
-# Build the standard app (NO production flag)
-RUN mvn clean package -DskipTests
+# Build with PRODUCTION mode enabled!
+RUN mvn clean package -Pproduction -DskipTests
 
-# Run the app with Render's dynamic port AND force IPv4 networking
-ENTRYPOINT sh -c "java -Dserver.port=${PORT:-8080} -Djava.net.preferIPv4Stack=true -jar target/*.jar"
+# Stage 2: Run the App
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+
+# Copy the compiled production .jar file from the build stage
+COPY --from=build /app/target/*.jar app.jar
+
+# Expose the standard web port
+EXPOSE 8080
+
+# Run the app with Render's port AND the IPv4 networking fix
+ENTRYPOINT sh -c "java -Dserver.port=${PORT:-8080} -Djava.net.preferIPv4Stack=true -jar app.jar"
