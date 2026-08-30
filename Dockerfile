@@ -24,5 +24,5 @@ COPY --from=build /app/target/*.jar app.jar
 # Expose the standard web port
 EXPOSE 8080
 
-# Run the app with Render's port AND the IPv4 networking fix
-ENTRYPOINT sh -c "java -Dserver.port=${PORT:-8080} -Djava.net.preferIPv4Stack=true -jar app.jar"
+# Run the app with Render's port, the IPv4 fix, AND explicitly force Vaadin Production Mode
+ENTRYPOINT sh -c "java -Dserver.port=${PORT:-8080} -Djava.net.preferIPv4Stack=true -Dvaadin.productionMode=true -jar app.jar"
