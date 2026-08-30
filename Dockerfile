@@ -21,6 +21,9 @@ WORKDIR /app
 # Copy the compiled .jar file from the build stage
 COPY --from=build /app/target/*.jar app.jar
 
+# Force Vaadin into production mode and map Render's dynamic port
+ENTRYPOINT java -Dserver.port=${PORT:-8080} -Dvaadin.productionMode=true -jar app.jar
+
 # Expose the standard web port
 EXPOSE 8080
 
