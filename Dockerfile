@@ -1,5 +1,5 @@
 # Stage 1: Build the Vaadin Production App
-FROM maven:3.9-eclipse-temurin-17 AS build
+FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /app
 
 # Copy the pom.xml and source code
@@ -10,7 +10,7 @@ COPY src ./src
 RUN mvn clean package -Pproduction -DskipTests
 
 # Stage 2: Run the App
-FROM eclipse-temurin:17-jre
+FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 # Copy the compiled .jar file from the build stage
