@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y curl \
 COPY pom.xml .
 COPY src ./src
 
-# Build with PRODUCTION mode enabled!
-RUN mvn clean package -Pproduction -DskipTests
+# Explicitly force the Vaadin plugin to compile the production UI before packaging
+RUN mvn clean vaadin:prepare-frontend vaadin:build-frontend package -DskipTests
 
 # Stage 2: Run the App
 FROM eclipse-temurin:21-jre
@@ -24,5 +24,5 @@ COPY --from=build /app/target/*.jar app.jar
 # Expose the standard web port
 EXPOSE 8080
 
-# Run the app with Render's port, the IPv4 fix, AND explicitly force Vaadin Production Mode
+# Run the app with Render's port, the IPv4 network fix, and production mode
 ENTRYPOINT sh -c "java -Dserver.port=${PORT:-8080} -Djava.net.preferIPv4Stack=true -Dvaadin.productionMode=true -jar app.jar"
