@@ -1,31 +1,18 @@
-# Stage 1: Build the Vaadin Production App
-FROM maven:3.9-eclipse-temurin-21 AS build
+# Single Stage: Both Build and Run
+FROM maven:3.9-eclipse-temurin-21
 WORKDIR /app
 
-# Install Node.js (Required for Vaadin to bundle the frontend UI)
+# Install Node.js so Vaadin can serve the UI exactly like it does locally
 RUN apt-get update && apt-get install -y curl \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
 
-# Copy the pom.xml and source code
+# Copy your code
 COPY pom.xml .
 COPY src ./src
 
-# Run the Maven production build
-RUN mvn clean package -Pproduction -DskipTests
+# Build the standard app (NO production flag)
+RUN mvn clean package -DskipTests
 
-# Stage 2: Run the App
-FROM eclipse-temurin:21-jre
-WORKDIR /app
-
-# Copy the compiled .jar file from the build stage
-COPY --from=build /app/target/*.jar app.jar
-
-# Force Vaadin into production mode and map Render's dynamic port
-ENTRYPOINT java -Dserver.port=${PORT:-8080} -Dvaadin.productionMode=true -jar app.jar
-
-# Expose the standard web port
-EXPOSE 8080
-
-# Start the Spring Boot server
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# Run the app with Render's dynamic port, using shell form to map the variable
+ENTRYPOINT sh -c "java -Dserver.port=${PORT:-8080} -jar target/*.jar"
