@@ -6,22 +6,22 @@ import com.pickem.app.model.Pick;
 import com.pickem.app.model.Player;
 import com.pickem.app.repository.PickRepository;
 import com.pickem.app.service.ConferenceService;
+import com.pickem.app.service.GameSyncService;
 import com.pickem.app.service.OddsService;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.dialog.Dialog;
-import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.FlexComponent.Alignment;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.component.textfield.TextField;
 
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +31,7 @@ public class PickSelectionDialog extends Dialog {
     private final VerticalLayout gameListContainer = new VerticalLayout();
     private final List<GameOddsDTO> games;
     private final Map<String, TeamDTO> teamDataMap;
+    private final GameSyncService gameSyncService;
     private static final String TOTALS_ICON = "https://cdn-icons-png.flaticon.com/512/1199/1199155.png";
 
     // Formatter for the game times (Pacific Time)
@@ -40,17 +41,26 @@ public class PickSelectionDialog extends Dialog {
 
     public PickSelectionDialog(
             Player player, int slotNumber, String sport, int weekNumber,
-            OddsService oddsService, PickRepository pickRepo, ConferenceService conferenceService, Runnable onPickSaved
+            OddsService oddsService, PickRepository pickRepo, ConferenceService conferenceService,
+            GameSyncService gameSyncService, Runnable onPickSaved
     ) {
+        this.gameSyncService = gameSyncService;
+
+        // 1. Enable built-in dark theme on the dialog & attach custom CSS overlay class
+        getElement().setAttribute("theme", "dark");
+        getElement().getClassList().add("pick-dialog-overlay");
+
         setHeaderTitle("Select Pick for " + player.getName() + " (Slot " + slotNumber + ")");
-        setWidth("550px");
-        setHeight("700px");
+        setWidth("560px");
+        setHeight("720px");
 
         games = sport.equals("NCAAF") ? oddsService.getCollegeFootballOdds() : oddsService.getNflOdds();
         this.teamDataMap = sport.equals("NCAAF") ? conferenceService.getTeamDataMap() : Map.of();
 
+        // --- CONFERENCE FILTER ---
         ComboBox<String> conferenceFilter = new ComboBox<>("Filter by Conference");
         conferenceFilter.setWidthFull();
+        conferenceFilter.getElement().setAttribute("theme", "dark");
 
         if (sport.equals("NCAAF")) {
             List<String> dynamicConferences = new ArrayList<>();
@@ -60,23 +70,64 @@ public class PickSelectionDialog extends Dialog {
         } else {
             conferenceFilter.setItems("All", "AFC", "NFC");
         }
-
         conferenceFilter.setValue("All");
 
+        // --- SEARCH FIELD ---
+        TextField searchField = new TextField("Search Team");
+        searchField.setPlaceholder("Type team name...");
+        searchField.setClearButtonVisible(true);
+        searchField.setWidthFull();
+        searchField.getElement().setAttribute("theme", "dark");
+        searchField.setValueChangeMode(com.vaadin.flow.data.value.ValueChangeMode.LAZY); // Filters live as you type
+
+        // --- LISTENERS ---
         conferenceFilter.addValueChangeListener(event -> {
-            renderGames(event.getValue(), player, slotNumber, sport, weekNumber, pickRepo, onPickSaved);
+            renderGames(event.getValue(), searchField.getValue(), player, slotNumber, sport, weekNumber, pickRepo, onPickSaved);
+        });
+
+        searchField.addValueChangeListener(event -> {
+            renderGames(conferenceFilter.getValue(), event.getValue(), player, slotNumber, sport, weekNumber, pickRepo, onPickSaved);
         });
 
         gameListContainer.setSizeFull();
         gameListContainer.getStyle().set("overflow-y", "auto");
+        gameListContainer.getStyle().set("padding-right", "4px");
 
-        renderGames("All", player, slotNumber, sport, weekNumber, pickRepo, onPickSaved);
+        // --- EXISTING SETUP ---
+        gameListContainer.setWidthFull();
+        // REMOVE this line if it's still there: gameListContainer.getStyle().set("overflow-y", "auto");
 
-        add(conferenceFilter, gameListContainer);
+        // Initial Render call
+        renderGames("All", "", player, slotNumber, sport, weekNumber, pickRepo, onPickSaved);
+
+        // --- REPLACE dialogLayout SETUP WITH THIS ---
+        VerticalLayout dialogLayout = new VerticalLayout(conferenceFilter, searchField, gameListContainer);
+        dialogLayout.setPadding(false);
+        dialogLayout.setSpacing(true);
+
+        // FIX: Change from setSizeFull() to explicit height / flex settings so it fits the modal cleanly
+        dialogLayout.setHeight("600px");
+        dialogLayout.setWidthFull();
+
+        // Let the game container expand and handle the scrolling internally
+        gameListContainer.setSizeFull();
+        gameListContainer.getStyle().set("overflow-y", "auto");
+        gameListContainer.getStyle().set("padding-right", "4px");
+
+        add(dialogLayout);
+
+        // --- CANCEL BUTTON IN FOOTER (Existing) ---
+        Button cancelBtn = new Button("Cancel", e -> close());
+        cancelBtn.getStyle()
+                .set("color", "#94a3b8")
+                .set("background", "transparent")
+                .set("cursor", "pointer");
+
+        getFooter().add(cancelBtn);
     }
 
     private void renderGames(
-            String selectedConference, Player player, int slotNumber, String sport,
+            String selectedConference, String searchQuery, Player player, int slotNumber, String sport,
             int weekNumber, PickRepository pickRepo, Runnable onPickSaved
     ) {
         gameListContainer.removeAll();
@@ -86,8 +137,21 @@ public class PickSelectionDialog extends Dialog {
             return;
         }
 
+        String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase();
+        int matchedCount = 0;
+
         for (GameOddsDTO game : games) {
-            if (!selectedConference.equals("All") && sport.equals("NCAAF")) {
+            String awayTeam = game.awayTeam() != null ? game.awayTeam() : "";
+            String homeTeam = game.homeTeam() != null ? game.homeTeam() : "";
+
+            // 1. Text Search Filter (Matches either away or home team name)
+            boolean matchesSearch = query.isEmpty()
+                    || awayTeam.toLowerCase().contains(query)
+                    || homeTeam.toLowerCase().contains(query);
+            if (!matchesSearch) continue;
+
+            // 2. Conference Filter (NCAAF only)
+            if (selectedConference != null && !selectedConference.equals("All") && sport.equals("NCAAF")) {
                 String homeConf = getConference(game.homeTeam());
                 String awayConf = getConference(game.awayTeam());
 
@@ -95,6 +159,9 @@ public class PickSelectionDialog extends Dialog {
                     continue;
                 }
             }
+
+            matchedCount++;
+            String dualLogoUrls = getLogoUrl(game.awayTeam(), sport) + "|" + getLogoUrl(game.homeTeam(), sport);
 
             Optional<GameOddsDTO.MarketDTO> spreadMarket = game.bookmakers().stream()
                     .flatMap(b -> b.markets().stream())
@@ -140,7 +207,7 @@ public class PickSelectionDialog extends Dialog {
                 gameCard.getStyle().set("margin-bottom", "12px");
                 gameCard.setSpacing(false);
 
-                String matchNameStr = game.awayTeam() + " @ " + game.homeTeam();
+                String matchNameStr = awayTeam + " @ " + homeTeam;
 
                 // --- START TIME HEADER ---
                 HorizontalLayout timeRow = new HorizontalLayout();
@@ -150,8 +217,6 @@ public class PickSelectionDialog extends Dialog {
 
                 String timeString = game.commenceTime() != null ? timeFormatter.format(game.commenceTime()) + " PT" : "TBD";
                 Span timeSpan = new Span(timeString);
-
-                // FIX: Force Light Gray Text
                 timeSpan.getStyle().set("font-size", "0.85em").set("color", "#94a3b8");
                 timeRow.add(timeSpan);
 
@@ -160,24 +225,24 @@ public class PickSelectionDialog extends Dialog {
                 awayRow.setWidthFull();
                 awayRow.setAlignItems(Alignment.CENTER);
 
-                Image awayLogo = new Image(getLogoUrl(game.awayTeam(), sport), "logo");
+                String awayLogoUrl = getLogoUrl(awayTeam, sport);
+                Image awayLogo = new Image(awayLogoUrl, awayTeam + " logo");
                 awayLogo.setWidth("30px");
                 awayLogo.setHeight("30px");
 
-                Span awayName = new Span(game.awayTeam());
-                // FIX: Force White Text
+                Span awayName = new Span(awayTeam);
                 awayName.getStyle().set("font-weight", "500").set("color", "#f8fafc");
 
                 Button awayBtn = new Button();
                 if (awayOutcome != null && awayOutcome.point() != null) {
                     String pointStr = awayOutcome.point() > 0 ? "+" + awayOutcome.point() : String.valueOf(awayOutcome.point());
                     awayBtn.setText(pointStr);
-                    String selectionStr = game.awayTeam() + " " + pointStr;
+                    String selectionStr = awayTeam + " " + pointStr;
 
-                    // NEW: Pass Game ID and Locked Point
-                    awayBtn.addClickListener(e -> savePick(player, slotNumber, sport, weekNumber, selectionStr, getLogoUrl(game.awayTeam(), sport), game.id(), awayOutcome.point(), matchNameStr, pickRepo, onPickSaved));
+                    awayBtn.addClickListener(e -> savePick(player, slotNumber, sport, weekNumber, selectionStr, getLogoUrl(awayTeam, sport), game.id(), awayOutcome.point(), matchNameStr, pickRepo, onPickSaved));
                 } else {
-                    awayBtn.setText("N/A"); awayBtn.setEnabled(false);
+                    awayBtn.setText("N/A");
+                    awayBtn.setEnabled(false);
                 }
                 awayBtn.setWidth("80px");
                 awayBtn.addClassName("odds-btn");
@@ -188,14 +253,14 @@ public class PickSelectionDialog extends Dialog {
                     overBtn.setText(pointStr);
                     String selectionStr = matchNameStr + " " + pointStr;
 
-                    // NEW: Pass Game ID and Locked Point
                     overBtn.addClickListener(e -> savePick(
                             player, slotNumber, sport, weekNumber, selectionStr,
-                            TOTALS_ICON, // Use neutral icon for totals
+                            dualLogoUrls,
                             game.id(), overOutcome.point(), matchNameStr, pickRepo, onPickSaved
                     ));
                 } else {
-                    overBtn.setText("N/A"); overBtn.setEnabled(false);
+                    overBtn.setText("N/A");
+                    overBtn.setEnabled(false);
                 }
                 overBtn.setWidth("80px");
                 overBtn.addClassName("odds-btn");
@@ -209,24 +274,24 @@ public class PickSelectionDialog extends Dialog {
                 homeRow.setAlignItems(Alignment.CENTER);
                 homeRow.getStyle().set("margin-top", "8px");
 
-                Image homeLogo = new Image(getLogoUrl(game.homeTeam(), sport), "logo");
+                String homeLogoUrl = getLogoUrl(homeTeam, sport);
+                Image homeLogo = new Image(homeLogoUrl, homeTeam + " logo");
                 homeLogo.setWidth("30px");
                 homeLogo.setHeight("30px");
 
-                Span homeName = new Span(game.homeTeam());
-                // FIX: Force White Text
+                Span homeName = new Span(homeTeam);
                 homeName.getStyle().set("font-weight", "500").set("color", "#f8fafc");
 
                 Button homeBtn = new Button();
                 if (homeOutcome != null && homeOutcome.point() != null) {
                     String pointStr = homeOutcome.point() > 0 ? "+" + homeOutcome.point() : String.valueOf(homeOutcome.point());
                     homeBtn.setText(pointStr);
-                    String selectionStr = game.homeTeam() + " " + pointStr;
+                    String selectionStr = homeTeam + " " + pointStr;
 
-                    // NEW: Pass Game ID and Locked Point
-                    homeBtn.addClickListener(e -> savePick(player, slotNumber, sport, weekNumber, selectionStr, getLogoUrl(game.homeTeam(), sport), game.id(), homeOutcome.point(), matchNameStr, pickRepo, onPickSaved));
+                    homeBtn.addClickListener(e -> savePick(player, slotNumber, sport, weekNumber, selectionStr, getLogoUrl(homeTeam, sport), game.id(), homeOutcome.point(), matchNameStr, pickRepo, onPickSaved));
                 } else {
-                    homeBtn.setText("N/A"); homeBtn.setEnabled(false);
+                    homeBtn.setText("N/A");
+                    homeBtn.setEnabled(false);
                 }
                 homeBtn.setWidth("80px");
                 homeBtn.addClassName("odds-btn");
@@ -237,14 +302,14 @@ public class PickSelectionDialog extends Dialog {
                     underBtn.setText(pointStr);
                     String selectionStr = matchNameStr + " " + pointStr;
 
-                    // NEW: Pass Game ID and Locked Point
                     underBtn.addClickListener(e -> savePick(
                             player, slotNumber, sport, weekNumber, selectionStr,
-                            TOTALS_ICON, // Use neutral icon for totals
+                            dualLogoUrls,
                             game.id(), underOutcome.point(), matchNameStr, pickRepo, onPickSaved
                     ));
                 } else {
-                    underBtn.setText("N/A"); underBtn.setEnabled(false);
+                    underBtn.setText("N/A");
+                    underBtn.setEnabled(false);
                 }
                 underBtn.setWidth("80px");
                 underBtn.addClassName("odds-btn");
@@ -255,6 +320,10 @@ public class PickSelectionDialog extends Dialog {
                 gameCard.add(timeRow, awayRow, homeRow);
                 gameListContainer.add(gameCard);
             }
+        }
+
+        if (matchedCount == 0) {
+            gameListContainer.add(new Span("No matching games found."));
         }
     }
 
@@ -267,7 +336,6 @@ public class PickSelectionDialog extends Dialog {
         pick.setSelection(selection);
         pick.setLogoUrl(logoUrl);
 
-        // --- NEW LOCKED FIELDS ---
         pick.setGameId(gameId);
         pick.setLockedPoint(lockedPoint);
         pick.setMatchName(matchName);
@@ -287,9 +355,7 @@ public class PickSelectionDialog extends Dialog {
         for (Map.Entry<String, TeamDTO> entry : teamDataMap.entrySet()) {
             String cfbdTeamName = entry.getKey();
 
-            // Check if the Odds API team name contains the CFBD school name
             if (teamName.contains(cfbdTeamName)) {
-                // If it's a match, make sure it's the LONGEST match we've found so far
                 if (cfbdTeamName.length() > maxMatchLength) {
                     maxMatchLength = cfbdTeamName.length();
                     bestMatch = entry.getValue();
@@ -305,32 +371,14 @@ public class PickSelectionDialog extends Dialog {
         return teamData != null ? teamData.conference() : "Other";
     }
 
-    // UPDATED to accept sport and pull from NFL map if necessary
     private String getLogoUrl(String teamName, String sport) {
-        if (sport.equals("NFL")) {
-            return getNflLogo(teamName);
+        // Tap into the GameSyncService dynamic logo cache (which now handles both!)
+        String cachedLogo = gameSyncService.getLogoUrl(teamName);
+
+        if (cachedLogo != null && !cachedLogo.isBlank()) {
+            return cachedLogo;
         }
 
-        TeamDTO teamData = getTeamData(teamName);
-        if (teamData != null && teamData.logos() != null && !teamData.logos().isEmpty()) {
-            return teamData.logos().get(0);
-        }
-        return "[https://cdn-icons-png.flaticon.com/512/1199/1199155.png](https://cdn-icons-png.flaticon.com/512/1199/1199155.png)";
-    }
-
-    // --- NFL LOGO MAP ---
-    private String getNflLogo(String teamName) {
-        Map<String, String> nflLogos = new HashMap<>();
-
-        // You can expand this by searching for the team's 3-letter abbreviation on ESPN
-        // Format: [https://a.espncdn.com/i/teamlogos/nfl/500/](https://a.espncdn.com/i/teamlogos/nfl/500/)[ABBREVIATION].png
-        nflLogos.put("Pittsburgh Steelers", "[https://a.espncdn.com/i/teamlogos/nfl/500/pit.png](https://a.espncdn.com/i/teamlogos/nfl/500/pit.png)");
-        nflLogos.put("Kansas City Chiefs", "[https://a.espncdn.com/i/teamlogos/nfl/500/kc.png](https://a.espncdn.com/i/teamlogos/nfl/500/kc.png)");
-        nflLogos.put("San Francisco 49ers", "[https://a.espncdn.com/i/teamlogos/nfl/500/sf.png](https://a.espncdn.com/i/teamlogos/nfl/500/sf.png)");
-        nflLogos.put("Baltimore Ravens", "[https://a.espncdn.com/i/teamlogos/nfl/500/bal.png](https://a.espncdn.com/i/teamlogos/nfl/500/bal.png)");
-        nflLogos.put("Los Angeles Rams", "[https://a.espncdn.com/i/teamlogos/nfl/500/lar.png](https://a.espncdn.com/i/teamlogos/nfl/500/lar.png)");
-        nflLogos.put("Los Angeles Chargers", "[https://a.espncdn.com/i/teamlogos/nfl/500/lac.png](https://a.espncdn.com/i/teamlogos/nfl/500/lac.png)");
-
-        return nflLogos.getOrDefault(teamName, "[https://cdn-icons-png.flaticon.com/512/1199/1199155.png](https://cdn-icons-png.flaticon.com/512/1199/1199155.png)");
+        return TOTALS_ICON;
     }
 }

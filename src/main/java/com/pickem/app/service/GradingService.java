@@ -1,8 +1,10 @@
 package com.pickem.app.service;
 
 import com.pickem.app.dto.ScoreDTO;
+import com.pickem.app.model.Game;
 import com.pickem.app.model.Pick;
 import com.pickem.app.model.Player;
+import com.pickem.app.repository.GameRepository;
 import com.pickem.app.repository.PickRepository;
 import com.pickem.app.repository.PlayerRepository;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -20,14 +22,28 @@ public class GradingService {
     private final PickRepository pickRepo;
     private final PlayerRepository playerRepo;
     private final OddsService oddsService;
+    private final GameRepository gameRepo;
 
-    public GradingService(PickRepository pickRepo, PlayerRepository playerRepo, OddsService oddsService) {
+    public GradingService(PickRepository pickRepo, PlayerRepository playerRepo, OddsService oddsService, GameRepository gameRepo) {
         this.pickRepo = pickRepo;
         this.playerRepo = playerRepo;
         this.oddsService = oddsService;
+        this.gameRepo = gameRepo;
     }
 
     public void gradePendingPicks() {
+
+        // 1. SIMULATION STEP: Give upcoming games fake scores and mark completed
+        List<Game> games = gameRepo.findAll();
+        for (Game game : games) {
+            if (!Boolean.TRUE.equals(game.getCompleted())) {
+                game.setAwayScore((int) (Math.random() * 35) + 7);
+                game.setHomeScore((int) (Math.random() * 35) + 7);
+                game.setCompleted(true);
+            }
+        }
+        gameRepo.saveAll(games);
+
         List<Pick> pendingPicks = pickRepo.findAll().stream()
                 .filter(p -> "PENDING".equals(p.getStatus()))
                 .toList();
@@ -109,7 +125,6 @@ public class GradingService {
             playerRepo.save(player);
         }
     }
-
 
     @Scheduled(cron = "0 0 4 * * *", zone = "America/Los_Angeles")
     public void scheduledDailyGrading() {

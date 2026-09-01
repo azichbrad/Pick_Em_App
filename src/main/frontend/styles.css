@@ -180,3 +180,99 @@
     border-radius: 6px;
     flex-shrink: 0;
 }
+
+/* --- DIALOG BACKDROP & CONTAINER --- */
+vaadin-dialog-overlay.pick-dialog-overlay::part(overlay) {
+    background: #0f172a !important; /* Deep slate matching your background */
+    border: 1px solid #1e293b;
+    border-radius: 16px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+    color: #f8fafc;
+    animation: modalPopIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+vaadin-dialog-overlay.pick-dialog-overlay::part(header) {
+    color: #f8fafc;
+    border-bottom: 1px solid #1e293b;
+    padding: 16px 20px;
+}
+
+vaadin-dialog-overlay.pick-dialog-overlay::part(footer) {
+    background: #0b1120;
+    border-top: 1px solid #1e293b;
+    padding: 12px 20px;
+}
+
+/* --- MODAL POP-IN ANIMATION --- */
+@keyframes modalPopIn {
+    0% {
+        opacity: 0;
+        transform: scale(0.94) translateY(10px);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* --- TACTILE BUTTONS & DOPAMINE CLICK EFFECT --- */
+.odds-btn {
+    background: #1e293b !important;
+    color: #38bdf8 !important; /* Bright cyan text */
+    border: 1px solid #334155 !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    cursor: pointer !important;
+}
+
+.odds-btn:hover {
+    background: #2563eb !important; /* Vivid blue on hover */
+    color: #ffffff !important;
+    border-color: #60a5fa !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+}
+
+.odds-btn:active {
+    transform: scale(0.92) !important; /* Satisfying spring bounce on click */
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.5) !important;
+}
+
+.pick-card-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+}
+
+.pick-card-top span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* --- CLEAN MODAL SCROLLING --- */
+vaadin-dialog-overlay.pick-dialog-overlay::part(content) {
+    padding: 20px !important;
+    overflow-y: auto !important; /* Let the dialog content handle the single clean scrollbar */
+}
+
+/* Custom sleek dark scrollbar for the modal */
+vaadin-dialog-overlay.pick-dialog-overlay ::-webkit-scrollbar {
+    width: 6px;
+}
+
+vaadin-dialog-overlay.pick-dialog-overlay ::-webkit-scrollbar-track {
+    background: #0f172a;
+}
+
+vaadin-dialog-overlay.pick-dialog-overlay ::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 4px;
+}
+
+vaadin-dialog-overlay.pick-dialog-overlay ::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+}
+

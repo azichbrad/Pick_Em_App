@@ -1,5 +1,4 @@
 package com.pickem.app.model;
-
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
@@ -10,22 +9,24 @@ import java.time.Instant;
 public class Game {
 
     @Id
-    private String id; // The exact Odds API ID acts as our unique Primary Key
+    private String id;
 
-    private String sport; // "NCAAF" or "NFL"
+    private String sport;
     private String homeTeam;
     private String awayTeam;
+
+    // --- NEW LOGO FIELDS ---
+    private String homeLogo;
+    private String awayLogo;
 
     private Instant commenceTime;
     private Boolean completed = false;
 
-    // The Cached Closing Lines
     private Double awaySpread;
     private Double homeSpread;
     private Double overTotal;
     private Double underTotal;
 
-    // The Live/Final Scores
     private Integer homeScore;
     private Integer awayScore;
 
@@ -41,6 +42,13 @@ public class Game {
 
     public String getAwayTeam() { return awayTeam; }
     public void setAwayTeam(String awayTeam) { this.awayTeam = awayTeam; }
+
+    // --- NEW LOGO GETTERS AND SETTERS ---
+    public String getHomeLogo() { return homeLogo; }
+    public void setHomeLogo(String homeLogo) { this.homeLogo = homeLogo; }
+
+    public String getAwayLogo() { return awayLogo; }
+    public void setAwayLogo(String awayLogo) { this.awayLogo = awayLogo; }
 
     public Instant getCommenceTime() { return commenceTime; }
     public void setCommenceTime(Instant commenceTime) { this.commenceTime = commenceTime; }

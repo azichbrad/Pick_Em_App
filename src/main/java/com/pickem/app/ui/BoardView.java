@@ -2,9 +2,12 @@ package com.pickem.app.ui;
 
 import com.pickem.app.model.Pick;
 import com.pickem.app.model.Player;
+import com.pickem.app.model.PlayerRecord;
 import com.pickem.app.repository.PickRepository;
+import com.pickem.app.repository.PlayerRecordRepository;
 import com.pickem.app.repository.PlayerRepository;
 import com.pickem.app.service.ConferenceService;
+import com.pickem.app.service.GameSyncService;
 import com.pickem.app.service.GradingService;
 import com.pickem.app.service.OddsService;
 import com.vaadin.flow.component.button.Button;
@@ -33,15 +36,19 @@ public class BoardView extends VerticalLayout {
     private final PickRepository pickRepo;
     private final OddsService oddsService;
     private final ConferenceService conferenceService;
-    private final GradingService gradingService; // 1. Add this
+    private final GradingService gradingService;
+    private final GameSyncService gameSyncService;
+    private final PlayerRecordRepository playerRecordRepo;
 
     // 2. Update the constructor to accept the new service
-    public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService, ConferenceService conferenceService, GradingService gradingService) {
+    public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService, ConferenceService conferenceService, GradingService gradingService, GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo, PlayerRecordRepository playerRecordRepo1) {
         this.playerRepo = playerRepo;
         this.pickRepo = pickRepo;
         this.oddsService = oddsService;
         this.conferenceService = conferenceService;
         this.gradingService = gradingService; // 3. Assign it
+        this.gameSyncService = gameSyncService;
+        this.playerRecordRepo = playerRecordRepo1;
 
         getElement().setAttribute("theme", Lumo.DARK);
         setSizeFull();
@@ -93,8 +100,9 @@ public class BoardView extends VerticalLayout {
         Button testGradeBtn = new Button("Force Grade (Test)");
         testGradeBtn.getStyle().set("background-color", "#334155").set("color", "white");
         testGradeBtn.addClickListener(e -> {
-            gradingService.gradePendingPicks(); // Fires the logic
-            renderPlayerColumns(boardGrid, sport, weekSelector.getValue()); // Redraws the board
+            int currentWeek = weekSelector.getValue(); // Ensure this matches your week dropdown component
+            gameSyncService.simulateAndGradeWeek(currentWeek, sport);
+            renderPlayerColumns(boardGrid, sport, currentWeek); // Redraws the UI
         });
 
         HorizontalLayout leftControls = new HorizontalLayout(weekSelector, testGradeBtn);
@@ -115,18 +123,45 @@ public class BoardView extends VerticalLayout {
         return container;
     }
 
+    // Inside renderPlayerColumns in BoardView.java:
+
     private void renderPlayerColumns(VerticalLayout boardGrid, String sport, Integer selectedWeek) {
         boardGrid.removeAll();
 
-        FormLayout board = new FormLayout();
-        board.setWidthFull();
-        board.setResponsiveSteps(
-                new FormLayout.ResponsiveStep("0", 1),
-                new FormLayout.ResponsiveStep("600px", 2),
-                new FormLayout.ResponsiveStep("1000px", 4)
-        );
+        // --- 1. CREATE LEADERBOARD BAR FIRST SO IT SITS AT THE TOP ---
+        HorizontalLayout leaderboardBar = new HorizontalLayout();
+        leaderboardBar.setWidthFull();
+        leaderboardBar.getStyle().set("background", "#1e293b").set("padding", "10px 16px").set("border-radius", "8px");
+        leaderboardBar.setAlignItems(Alignment.CENTER);
 
+        Span leaderboardTitle = new Span("🏆 " + sport + " Overall Leaderboard: ");
+        leaderboardTitle.getStyle().set("font-weight", "bold").set("color", "#38bdf8");
+        leaderboardBar.add(leaderboardTitle);
+
+        List<PlayerRecord> overallRecords = playerRecordRepo.findBySportAndWeekNumber(sport, 0);
+        overallRecords.sort((a, b) -> Integer.compare(b.getWins(), a.getWins()));
+
+        for (PlayerRecord rec : overallRecords) {
+            Span statSpan = new Span(rec.getPlayer().getName() + ": " + rec.getWins() + "W-" + rec.getLosses() + "L-" + rec.getPushes() + "P");
+            statSpan.getStyle().set("color", "#f8fafc").set("margin-right", "15px");
+            leaderboardBar.add(statSpan);
+        }
+
+        // Add it to the board grid immediately so it renders at the very top
+        boardGrid.add(leaderboardBar);
+
+        // --- 2. THEN SORT AND RENDER YOUR PLAYER COLUMNS BELOW IT ---
         List<Player> players = playerRepo.findAll();
+        players.sort((p1, p2) -> {
+            PlayerRecord r1 = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(p1.getId(), sport, selectedWeek).orElse(new PlayerRecord(p1, sport, selectedWeek));
+            PlayerRecord r2 = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(p2.getId(), sport, selectedWeek).orElse(new PlayerRecord(p2, sport, selectedWeek));
+
+            if (r2.getWins() != r1.getWins()) {
+                return Integer.compare(r2.getWins(), r1.getWins());
+            }
+            return Integer.compare(r1.getLosses(), r2.getLosses());
+        });
+
         List<Pick> weeklyPicks = pickRepo.findByWeekNumberAndSport(selectedWeek, sport);
 
         for (Player player : players) {
@@ -184,14 +219,35 @@ public class BoardView extends VerticalLayout {
                     slotContent.addClassName("pick-card-wrapper");
 
                     com.vaadin.flow.component.html.Div topRow = new com.vaadin.flow.component.html.Div();
-                    topRow.addClassName("pick-card-top");
+                    // Ensure topRow uses proper flex spacing so logos and text don't collide
+                    topRow.getStyle().set("display", "flex");
+                    topRow.getStyle().set("align-items", "center");
+                    topRow.getStyle().set("gap", "8px"); // Adds space between the logo container and the text
 
                     if (pick.getLogoUrl() != null && !pick.getLogoUrl().isEmpty()) {
-                        Image logo = new Image(pick.getLogoUrl(), "icon");
-                        logo.setWidth("24px");
-                        logo.setHeight("24px");
-                        logo.getStyle().set("flex-shrink", "0");
-                        topRow.add(logo);
+                        if (pick.getLogoUrl().contains("|")) {
+                            // --- DUAL LOGOS (Totals / Over & Under) ---
+                            String[] urls = pick.getLogoUrl().split("\\|");
+
+                            Image awayLogo = new Image(urls[0], "away logo");
+                            awayLogo.setWidth("20px");
+                            awayLogo.setHeight("20px");
+                            awayLogo.getStyle().set("flex-shrink", "0").set("margin-right", "2px");
+
+                            Image homeLogo = new Image(urls[1], "home logo");
+                            homeLogo.setWidth("20px");
+                            homeLogo.setHeight("20px");
+                            homeLogo.getStyle().set("flex-shrink", "0");
+
+                            topRow.add(awayLogo, homeLogo);
+                        } else {
+                            // --- SINGLE LOGO (Spread Picks) ---
+                            Image logo = new Image(pick.getLogoUrl(), "icon");
+                            logo.setWidth("24px");
+                            logo.setHeight("24px");
+                            logo.getStyle().set("flex-shrink", "0");
+                            topRow.add(logo);
+                        }
                     }
 
                     String rawSelection = pick.getSelection();
@@ -245,7 +301,14 @@ public class BoardView extends VerticalLayout {
 
                 slotButton.addClickListener(event -> {
                     PickSelectionDialog dialog = new PickSelectionDialog(
-                            player, currentSlot, sport, selectedWeek, oddsService, pickRepo, conferenceService,
+                            player,
+                            currentSlot,
+                            sport,
+                            selectedWeek,
+                            oddsService,
+                            pickRepo,
+                            conferenceService,
+                            gameSyncService, // <-- ADD THIS RIGHT HERE
                             () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
                     );
                     dialog.open();
@@ -253,11 +316,8 @@ public class BoardView extends VerticalLayout {
 
                 playerCard.add(slotButton);
             }
-
-            board.add(playerCard);
+            boardGrid.add(playerCard);
         }
-
-        boardGrid.add(board);
     }
 
     private String formatWeekLabel(String sport, Integer week) {
