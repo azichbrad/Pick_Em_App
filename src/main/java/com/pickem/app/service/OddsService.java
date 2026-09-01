@@ -69,4 +69,31 @@ public class OddsService {
             return List.of();
         }
     }
+
+
+    public List<GameOddsDTO> getOddsForSportAndWeek(String sport, int weekNumber) {
+        List<GameOddsDTO> allGames = getOddsForSport(sport);
+        if (allGames == null || allGames.isEmpty()) {
+            return List.of();
+        }
+
+        int gamesPerWeek = "NFL".equalsIgnoreCase(sport) ? 16 : 60;
+        int startIndex = (Math.max(1, weekNumber) - 1) * gamesPerWeek;
+        int endIndex = Math.min(startIndex + gamesPerWeek, allGames.size());
+
+        if (startIndex >= allGames.size()) {
+            return List.of(); // Week is out of range
+        }
+
+        return allGames.subList(startIndex, endIndex);
+    }
+
+    // Add this method to OddsService.java:
+    public List<GameOddsDTO> getOddsForSport(String sport) {
+        if ("NFL".equalsIgnoreCase(sport)) {
+            return getNflOdds();
+        } else {
+            return getCollegeFootballOdds();
+        }
+    }
 }

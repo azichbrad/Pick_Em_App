@@ -39,12 +39,17 @@ public class PickSelectionDialog extends Dialog {
             .ofPattern("EEE, MMM d • h:mm a")
             .withZone(ZoneId.of("America/Los_Angeles"));
 
+    // Inside the PickSelectionDialog constructor in PickSelectionDialog.java:
     public PickSelectionDialog(
             Player player, int slotNumber, String sport, int weekNumber,
             OddsService oddsService, PickRepository pickRepo, ConferenceService conferenceService,
             GameSyncService gameSyncService, Runnable onPickSaved
     ) {
         this.gameSyncService = gameSyncService;
+
+        this.games = oddsService.getOddsForSportAndWeek(sport, weekNumber) != null
+                ? oddsService.getOddsForSportAndWeek(sport, weekNumber)
+                : List.of();
 
         // 1. Enable built-in dark theme on the dialog & attach custom CSS overlay class
         getElement().setAttribute("theme", "dark");
@@ -54,8 +59,9 @@ public class PickSelectionDialog extends Dialog {
         setWidth("560px");
         setHeight("720px");
 
-        games = sport.equals("NCAAF") ? oddsService.getCollegeFootballOdds() : oddsService.getNflOdds();
         this.teamDataMap = sport.equals("NCAAF") ? conferenceService.getTeamDataMap() : Map.of();
+
+        // ... rest of your code
 
         // --- CONFERENCE FILTER ---
         ComboBox<String> conferenceFilter = new ComboBox<>("Filter by Conference");
