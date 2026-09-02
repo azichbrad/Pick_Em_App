@@ -32,8 +32,8 @@ public class GradingService {
     }
 
     public void gradePendingPicks() {
-
-        // 1. SIMULATION STEP: Give upcoming games fake scores and mark completed
+        // REMOVE OR COMMENT OUT THIS ENTIRE SIMULATION BLOCK SO IT DOESN'T FAKE SCORES:
+        /*
         List<Game> games = gameRepo.findAll();
         for (Game game : games) {
             if (!Boolean.TRUE.equals(game.getCompleted())) {
@@ -43,6 +43,7 @@ public class GradingService {
             }
         }
         gameRepo.saveAll(games);
+        */
 
         List<Pick> pendingPicks = pickRepo.findAll().stream()
                 .filter(p -> "PENDING".equals(p.getStatus()))
@@ -74,8 +75,9 @@ public class GradingService {
                     .filter(s -> s.score() != null)
                     .collect(Collectors.toMap(ScoreDTO.TeamScoreDTO::name, s -> Integer.parseInt(s.score())));
 
-            int homeScore = scoreMap.getOrDefault(game.homeTeam(), 0);
-            int awayScore = scoreMap.getOrDefault(game.awayTeam(), 0);
+            // Extract scores safely using flexible partial matching to handle API name variations
+            int homeScore = findTeamScore(scoreMap, game.homeTeam());
+            int awayScore = findTeamScore(scoreMap, game.awayTeam());
 
             String selection = pick.getSelection();
             Double lockedPoint = pick.getLockedPoint();
@@ -136,5 +138,19 @@ public class GradingService {
         } catch (Exception e) {
             System.err.println("Error during automated grading: " + e.getMessage());
         }
+    }
+
+    private int findTeamScore(Map<String, Integer> scoreMap, String teamName) {
+        if (teamName == null) return 0;
+        if (scoreMap.containsKey(teamName)) {
+            return scoreMap.get(teamName);
+        }
+        // Fallback: search for partial substring matches (e.g., "Jacksonville State" matches "Jacksonville State Gamecocks")
+        for (Map.Entry<String, Integer> entry : scoreMap.entrySet()) {
+            if (entry.getKey().contains(teamName) || teamName.contains(entry.getKey())) {
+                return entry.getValue();
+            }
+        }
+        return 0;
     }
 }

@@ -39,7 +39,6 @@ public class PickSelectionDialog extends Dialog {
             .ofPattern("EEE, MMM d • h:mm a")
             .withZone(ZoneId.of("America/Los_Angeles"));
 
-    // Inside the PickSelectionDialog constructor in PickSelectionDialog.java:
     public PickSelectionDialog(
             Player player, int slotNumber, String sport, int weekNumber,
             OddsService oddsService, PickRepository pickRepo, ConferenceService conferenceService,
@@ -47,9 +46,9 @@ public class PickSelectionDialog extends Dialog {
     ) {
         this.gameSyncService = gameSyncService;
 
-        this.games = oddsService.getOddsForSportAndWeek(sport, weekNumber) != null
-                ? oddsService.getOddsForSportAndWeek(sport, weekNumber)
-                : List.of();
+        // Fast-path assignment with fallback to avoid null pointer delays
+        List<GameOddsDTO> fetchedGames = oddsService.getOddsForSportAndWeek(sport, weekNumber);
+        this.games = fetchedGames != null ? fetchedGames : List.of();
 
         // 1. Enable built-in dark theme on the dialog & attach custom CSS overlay class
         getElement().setAttribute("theme", "dark");
@@ -60,8 +59,6 @@ public class PickSelectionDialog extends Dialog {
         setHeight("720px");
 
         this.teamDataMap = sport.equals("NCAAF") ? conferenceService.getTeamDataMap() : Map.of();
-
-        // ... rest of your code
 
         // --- CONFERENCE FILTER ---
         ComboBox<String> conferenceFilter = new ComboBox<>("Filter by Conference");
@@ -84,7 +81,7 @@ public class PickSelectionDialog extends Dialog {
         searchField.setClearButtonVisible(true);
         searchField.setWidthFull();
         searchField.getElement().setAttribute("theme", "dark");
-        searchField.setValueChangeMode(com.vaadin.flow.data.value.ValueChangeMode.LAZY); // Filters live as you type
+        searchField.setValueChangeMode(com.vaadin.flow.data.value.ValueChangeMode.LAZY);
 
         // --- LISTENERS ---
         conferenceFilter.addValueChangeListener(event -> {
@@ -99,30 +96,18 @@ public class PickSelectionDialog extends Dialog {
         gameListContainer.getStyle().set("overflow-y", "auto");
         gameListContainer.getStyle().set("padding-right", "4px");
 
-        // --- EXISTING SETUP ---
-        gameListContainer.setWidthFull();
-        // REMOVE this line if it's still there: gameListContainer.getStyle().set("overflow-y", "auto");
-
         // Initial Render call
         renderGames("All", "", player, slotNumber, sport, weekNumber, pickRepo, onPickSaved);
 
-        // --- REPLACE dialogLayout SETUP WITH THIS ---
         VerticalLayout dialogLayout = new VerticalLayout(conferenceFilter, searchField, gameListContainer);
         dialogLayout.setPadding(false);
         dialogLayout.setSpacing(true);
-
-        // FIX: Change from setSizeFull() to explicit height / flex settings so it fits the modal cleanly
         dialogLayout.setHeight("600px");
         dialogLayout.setWidthFull();
 
-        // Let the game container expand and handle the scrolling internally
-        gameListContainer.setSizeFull();
-        gameListContainer.getStyle().set("overflow-y", "auto");
-        gameListContainer.getStyle().set("padding-right", "4px");
-
         add(dialogLayout);
 
-        // --- CANCEL BUTTON IN FOOTER (Existing) ---
+        // --- CANCEL BUTTON IN FOOTER ---
         Button cancelBtn = new Button("Cancel", e -> close());
         cancelBtn.getStyle()
                 .set("color", "#94a3b8")
