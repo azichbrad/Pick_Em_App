@@ -346,7 +346,9 @@ public class PickSelectionDialog extends Dialog {
         for (Map.Entry<String, TeamDTO> entry : teamDataMap.entrySet()) {
             String cfbdTeamName = entry.getKey();
 
-            if (teamName.contains(cfbdTeamName)) {
+            // FIX: Use startsWith instead of contains!
+            // This prevents "West Georgia Wolves" from matching "Georgia"
+            if (teamName.startsWith(cfbdTeamName)) {
                 if (cfbdTeamName.length() > maxMatchLength) {
                     maxMatchLength = cfbdTeamName.length();
                     bestMatch = entry.getValue();

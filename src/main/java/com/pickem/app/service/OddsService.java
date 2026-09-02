@@ -70,14 +70,14 @@ public class OddsService {
         }
     }
 
-
     public List<GameOddsDTO> getOddsForSportAndWeek(String sport, int weekNumber) {
         List<GameOddsDTO> allGames = getOddsForSport(sport);
         if (allGames == null || allGames.isEmpty()) {
             return List.of();
         }
 
-        int gamesPerWeek = "NFL".equalsIgnoreCase(sport) ? 16 : 60;
+        // FIX: Bump NCAAF games from 60 up to 150 so no teams get cut off
+        int gamesPerWeek = "NFL".equalsIgnoreCase(sport) ? 16 : 150;
         int startIndex = (Math.max(1, weekNumber) - 1) * gamesPerWeek;
         int endIndex = Math.min(startIndex + gamesPerWeek, allGames.size());
 
