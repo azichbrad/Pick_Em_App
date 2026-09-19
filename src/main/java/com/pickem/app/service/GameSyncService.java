@@ -238,8 +238,8 @@ public class GameSyncService {
             // Map standard game details
             game.setId(apiGame.id());
             game.setSport(sport);
-            game.setHomeTeam(getLogoUrl(apiGame.homeTeam()));
-            game.setAwayTeam(getLogoUrl(apiGame.awayTeam()));
+            game.setHomeTeam(apiGame.homeTeam());
+            game.setAwayTeam(apiGame.awayTeam());
             game.setCommenceTime(apiGame.commenceTime());
 
             // 3. Map the Logos from the cache!
@@ -355,5 +355,23 @@ public class GameSyncService {
         nflLogos.put("Los Angeles Chargers", "https://a.espncdn.com/i/teamlogos/nfl/500/lac.png");
 
         return nflLogos.getOrDefault(teamName, "https://cdn-icons-png.flaticon.com/512/1199/1199155.png");
+    }
+
+    public java.util.List<com.pickem.app.model.Game> getGamesForSportAndWeekFromDb(String sport, int weekNumber) {
+        java.util.List<com.pickem.app.model.Game> allGames = gameRepo.findAll();
+
+        java.time.ZonedDateTime week1Start = "NFL".equalsIgnoreCase(sport)
+                ? java.time.ZonedDateTime.of(2026, 9, 8, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"))
+                : java.time.ZonedDateTime.of(2026, 9, 1, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
+
+        java.time.Instant windowStart = week1Start.plusDays((weekNumber - 1) * 7L).toInstant();
+        java.time.Instant windowEnd = week1Start.plusDays(weekNumber * 7L).toInstant();
+
+        return allGames.stream()
+                .filter(g -> sport.equalsIgnoreCase(g.getSport()))
+                .filter(g -> g.getCommenceTime() != null &&
+                        !g.getCommenceTime().isBefore(windowStart) &&
+                        g.getCommenceTime().isBefore(windowEnd))
+                .toList();
     }
 }

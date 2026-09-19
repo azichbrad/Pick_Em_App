@@ -43,17 +43,19 @@ public class OddsService {
 
     @Cacheable("ncaafOdds")
     public List<GameOddsDTO> getCollegeFootballOdds() {
-        String baseUrl = "https://api.sharpapi.io/api/v1/odds?league=NCAAF&market=spread,total";
+        // ADDED: &limit=200 to maximize page size and minimize API requests
+        String baseUrl = "https://api.sharpapi.io/api/v1/odds?league=NCAAF&market=spread,total&limit=200";
         return parseSharpApiResponse(fetchAllSharpApiOdds(baseUrl));
     }
 
     @Cacheable("nflOdds")
     public List<GameOddsDTO> getNflOdds() {
-        String baseUrl = "https://api.sharpapi.io/api/v1/odds?league=NFL&market=spread,total";
+        // ADDED: &limit=200 to maximize page size and minimize API requests
+        String baseUrl = "https://api.sharpapi.io/api/v1/odds?league=NFL&market=spread,total&limit=200";
         return parseSharpApiResponse(fetchAllSharpApiOdds(baseUrl));
     }
 
-    // --- NEW: Automated Pagination Loop ---
+    // --- Automated Pagination Loop ---
     private String fetchAllSharpApiOdds(String apiUrl) {
         ArrayNode allData = objectMapper.createArrayNode();
         int offset = 0;
@@ -81,9 +83,9 @@ public class OddsService {
                 if (pagination.has("has_more") && pagination.get("has_more").asBoolean()) {
                     offset = pagination.get("next_offset").asInt();
 
-                    // THROTTLE: Pause for 2 seconds before requesting the next page to protect the 12/min limit
+                    // UPDATED THROTTLE: 5 seconds guarantees a max of 12 requests per minute!
                     try {
-                        Thread.sleep(2000);
+                        Thread.sleep(5000);
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                     }
