@@ -24,6 +24,8 @@ public class Pick {
     private String gameId;      // Locks the API's unique game ID to fetch final scores later
     private Double lockedPoint; // Locks the exact spread/total number (e.g., 24.5)
     private String matchName;   // Saves the matchup (e.g., "Boise State @ Oregon")
+    private String marketType;   // e.g., "spread", "totals"
+    private String selectionSide; // e.g., "Clemson", "Over", "Under"
 
     // --- GETTERS AND SETTERS ---
 
@@ -59,4 +61,10 @@ public class Pick {
 
     public String getMatchName() { return matchName; }
     public void setMatchName(String matchName) { this.matchName = matchName; }
+
+    public String getMarketType() { return marketType; }
+    public void setMarketType(String marketType) { this.marketType = marketType; }
+
+    public String getSelectionSide() { return selectionSide; }
+    public void setSelectionSide(String selectionSide) { this.selectionSide = selectionSide; }
 }

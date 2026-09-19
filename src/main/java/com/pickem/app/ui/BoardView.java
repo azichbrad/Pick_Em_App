@@ -6,14 +6,10 @@ import com.pickem.app.model.PlayerRecord;
 import com.pickem.app.repository.PickRepository;
 import com.pickem.app.repository.PlayerRecordRepository;
 import com.pickem.app.repository.PlayerRepository;
-import com.pickem.app.service.ConferenceService;
-import com.pickem.app.service.GameSyncService;
-import com.pickem.app.service.GradingService;
-import com.pickem.app.service.OddsService;
+import com.pickem.app.service.*;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.dependency.CssImport;
-import com.vaadin.flow.component.formlayout.FormLayout;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Span;
@@ -39,9 +35,14 @@ public class BoardView extends VerticalLayout {
     private final GradingService gradingService;
     private final GameSyncService gameSyncService;
     private final PlayerRecordRepository playerRecordRepo;
+    private final PickRepository pickRepository;
+    private final PickService pickService;
 
     // 2. Update the constructor to accept the new service
-    public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService, ConferenceService conferenceService, GradingService gradingService, GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo, PlayerRecordRepository playerRecordRepo1) {
+    public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService,
+                     ConferenceService conferenceService, GradingService gradingService,
+                     GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo, PlayerRecordRepository playerRecordRepo1,
+                     PickRepository pickRepository, PickService pickService) {
         this.playerRepo = playerRepo;
         this.pickRepo = pickRepo;
         this.oddsService = oddsService;
@@ -49,6 +50,8 @@ public class BoardView extends VerticalLayout {
         this.gradingService = gradingService; // 3. Assign it
         this.gameSyncService = gameSyncService;
         this.playerRecordRepo = playerRecordRepo1;
+        this.pickRepository = pickRepository;
+        this.pickService = pickService;
 
         getElement().setAttribute("theme", Lumo.DARK);
         setSizeFull();
@@ -225,6 +228,7 @@ public class BoardView extends VerticalLayout {
 
             // Get player's picks map for this week
             java.util.Map<Integer, Pick> slotPickMap = playerPicksMap.getOrDefault(player.getId(), java.util.Map.of());
+            boolean weekLocked = isWeekLocked(sport, selectedWeek);
 
             // Render 5 Pick Slots
             for (int slot = 1; slot <= 5; slot++) {
@@ -316,20 +320,31 @@ public class BoardView extends VerticalLayout {
                     }
                 }
 
-                slotButton.addClickListener(event -> {
-                    PickSelectionDialog dialog = new PickSelectionDialog(
-                            player,
-                            currentSlot,
-                            sport,
-                            selectedWeek,
-                            oddsService,
-                            pickRepo,
-                            conferenceService,
-                            gameSyncService,
-                            () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
-                    );
-                    dialog.open();
-                });
+                if (weekLocked) {
+                    slotButton.getStyle().set("cursor", "default");
+                    if (existingPick == null) {
+                        slotButton.setText("🔒 Locked");
+                        slotButton.getStyle()
+                                .set("color", "#475569")
+                                .set("background-color", "#0f172a")
+                                .set("border", "1px dashed #334155");
+                    }
+                } else {
+                    slotButton.addClickListener(event -> {
+                        PickSelectionDialog dialog = new PickSelectionDialog(
+                                player,
+                                currentSlot,
+                                sport,
+                                selectedWeek,
+                                oddsService,
+                                pickService,
+                                conferenceService,
+                                gameSyncService,
+                                () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
+                        );
+                        dialog.open();
+                    });
+                }
 
                 playerCard.add(slotButton);
             }
@@ -349,5 +364,15 @@ public class BoardView extends VerticalLayout {
             if (week == 19) return "National Championship";
         }
         return "Week " + week;
+    }
+
+    private boolean isWeekLocked(String sport, int weekNumber) {
+        java.time.ZonedDateTime week1Start = "NFL".equalsIgnoreCase(sport)
+                ? java.time.ZonedDateTime.of(2026, 9, 8, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"))
+                : java.time.ZonedDateTime.of(2026, 9, 1, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
+
+        // The window ends 7 days after the start of the specified week
+        java.time.Instant windowEnd = week1Start.plusDays(weekNumber * 7L).toInstant();
+        return java.time.Instant.now().isAfter(windowEnd);
     }
 }

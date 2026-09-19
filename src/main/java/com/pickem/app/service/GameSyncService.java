@@ -238,8 +238,8 @@ public class GameSyncService {
             // Map standard game details
             game.setId(apiGame.id());
             game.setSport(sport);
-            game.setHomeTeam(apiGame.homeTeam());
-            game.setAwayTeam(apiGame.awayTeam());
+            game.setHomeTeam(getLogoUrl(apiGame.homeTeam()));
+            game.setAwayTeam(getLogoUrl(apiGame.awayTeam()));
             game.setCommenceTime(apiGame.commenceTime());
 
             // 3. Map the Logos from the cache!
