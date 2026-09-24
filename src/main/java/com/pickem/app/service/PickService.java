@@ -83,4 +83,11 @@ public class PickService {
         pick.setMarketType(marketType);
         pick.setSelectionSide(selectionSide);
     }
+
+    public java.util.Set<String> getBurnedSelectionKeys(Long playerId, String sport, int weekNumber) {
+        return burnedSelectionRepo.findByPlayerIdAndSportAndWeekNumber(playerId, sport, weekNumber)
+                .stream()
+                .map(b -> b.getGameId() + "_" + b.getMarketType() + "_" + b.getSelectionSide())
+                .collect(java.util.stream.Collectors.toSet());
+    }
 }
