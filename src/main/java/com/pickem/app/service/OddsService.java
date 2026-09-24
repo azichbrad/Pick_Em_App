@@ -1,10 +1,11 @@
 package com.pickem.app.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.pickem.app.dto.GameOddsDTO;
 import com.pickem.app.dto.ScoreDTO;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,10 +22,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 @Service
 public class OddsService {
@@ -39,23 +37,26 @@ public class OddsService {
     private String baseUrl;
 
     private final RestTemplate restTemplate = new RestTemplate();
-    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    // FIXED: Actually register the JavaTimeModule to prevent the Jackson crash
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     @Cacheable("ncaafOdds")
     public List<GameOddsDTO> getCollegeFootballOdds() {
-        // ADDED: &limit=200 to maximize page size and minimize API requests
-        String baseUrl = "https://api.sharpapi.io/api/v1/odds?league=NCAAF&market=spread,total&limit=200";
+        // FIXED: Using exact market_type names to filter out 1st-half/quarter noise
+        String baseUrl = "https://api.sharpapi.io/api/v1/odds?league=NCAAF&market_type=point_spread,total_points&limit=200";
         return parseSharpApiResponse(fetchAllSharpApiOdds(baseUrl));
     }
 
     @Cacheable("nflOdds")
     public List<GameOddsDTO> getNflOdds() {
-        // ADDED: &limit=200 to maximize page size and minimize API requests
-        String baseUrl = "https://api.sharpapi.io/api/v1/odds?league=NFL&market=spread,total&limit=200";
+        // FIXED: Using exact market_type names to filter out 1st-half/quarter noise
+        String baseUrl = "https://api.sharpapi.io/api/v1/odds?league=NFL&market_type=point_spread,total_points&limit=200";
         return parseSharpApiResponse(fetchAllSharpApiOdds(baseUrl));
     }
 
-    // --- Automated Pagination Loop ---
     private String fetchAllSharpApiOdds(String apiUrl) {
         ArrayNode allData = objectMapper.createArrayNode();
         int offset = 0;
@@ -78,12 +79,10 @@ public class OddsService {
                     }
                 }
 
-                // Check SharpAPI's pagination block to see if we need to fetch another page
                 JsonNode pagination = root.path("pagination");
                 if (pagination.has("has_more") && pagination.get("has_more").asBoolean()) {
                     offset = pagination.get("next_offset").asInt();
 
-                    // UPDATED THROTTLE: 5 seconds guarantees a max of 12 requests per minute!
                     try {
                         Thread.sleep(5000);
                     } catch (InterruptedException ie) {
@@ -126,17 +125,18 @@ public class OddsService {
             return List.of();
         }
 
+        // FIXED: NCAAF shifted to August 30 (Sunday) to capture Thursday-Saturday games
         ZonedDateTime week1Start = "NFL".equalsIgnoreCase(sport)
                 ? ZonedDateTime.of(2026, 9, 8, 0, 0, 0, 0, ZoneId.of("America/Los_Angeles"))
-                : ZonedDateTime.of(2026, 9, 1, 0, 0, 0, 0, ZoneId.of("America/Los_Angeles"));
+                : ZonedDateTime.of(2026, 8, 30, 0, 0, 0, 0, ZoneId.of("America/Los_Angeles"));
 
         Instant windowStart = week1Start.plusDays((weekNumber - 1) * 7L).toInstant();
         Instant windowEnd = week1Start.plusDays(weekNumber * 7L).toInstant();
 
         return allGames.stream()
-                .filter(game -> game.commenceTime() != null &&
-                        !game.commenceTime().isBefore(windowStart) &&
-                        game.commenceTime().isBefore(windowEnd))
+                .filter(game -> game.eventStartTime() != null &&
+                        !game.eventStartTime().isBefore(windowStart) &&
+                        game.eventStartTime().isBefore(windowEnd))
                 .toList();
     }
 
@@ -149,105 +149,18 @@ public class OddsService {
     }
 
     private List<GameOddsDTO> parseSharpApiResponse(String jsonBody) {
-        List<GameOddsDTO> formattedGames = new ArrayList<>();
-        if (jsonBody == null || jsonBody.isBlank()) return formattedGames;
-
         try {
-            JsonNode root = objectMapper.readTree(jsonBody);
-            JsonNode dataArray = root.path("data");
-            Map<String, GameDataBuilder> gamesMap = new HashMap<>();
+            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(jsonBody);
 
-            if (dataArray.isArray()) {
-                for (JsonNode node : dataArray) {
-                    if (node.has("is_main_line") && !node.get("is_main_line").asBoolean()) continue;
+            com.fasterxml.jackson.databind.JsonNode dataNode = root.has("data") ? root.get("data") : root;
 
-                    String marketType = node.path("market_type").asText();
-                    if (marketType.contains("quarter") || marketType.contains("half")) continue;
-
-                    String eventId = node.path("event_id").asText();
-                    GameDataBuilder gb = gamesMap.computeIfAbsent(eventId, id -> {
-                        GameDataBuilder newGb = new GameDataBuilder();
-                        newGb.id = id;
-                        newGb.homeTeam = node.path("home_team").asText();
-                        newGb.awayTeam = node.path("away_team").asText();
-                        newGb.commenceTime = ZonedDateTime.parse(node.path("event_start_time").asText()).toInstant();
-                        return newGb;
-                    });
-
-                    double line = node.path("line").asDouble();
-                    ObjectNode outcomeNode = objectMapper.createObjectNode();
-                    outcomeNode.put("point", line);
-
-                    if (marketType.contains("spread")) {
-                        // FIX: Use team_side ("home" or "away") instead of the raw selection string!
-                        String teamSide = node.path("team_side").asText();
-                        if ("away".equalsIgnoreCase(teamSide)) {
-                            outcomeNode.put("name", gb.awayTeam);
-                        } else {
-                            outcomeNode.put("name", gb.homeTeam);
-                        }
-                        gb.spreadOutcomes.add(outcomeNode);
-                    } else if (marketType.contains("total")) {
-                        // FIX: Use selection_type ("over" or "under") instead of the raw selection string!
-                        String selType = node.path("selection_type").asText();
-                        String capitalized = selType.substring(0, 1).toUpperCase() + selType.substring(1).toLowerCase();
-                        outcomeNode.put("name", capitalized);
-                        gb.totalOutcomes.add(outcomeNode);
-                    }
-                }
-            }
-
-            for (GameDataBuilder gb : gamesMap.values()) {
-                ArrayNode marketsArray = objectMapper.createArrayNode();
-
-                if (!gb.spreadOutcomes.isEmpty()) {
-                    ObjectNode spreadMarket = objectMapper.createObjectNode();
-                    spreadMarket.put("key", "spread");
-                    ArrayNode outArray = objectMapper.createArrayNode();
-                    gb.spreadOutcomes.forEach(outArray::add);
-                    spreadMarket.set("outcomes", outArray);
-                    marketsArray.add(spreadMarket);
-                }
-
-                if (!gb.totalOutcomes.isEmpty()) {
-                    ObjectNode totalMarket = objectMapper.createObjectNode();
-                    totalMarket.put("key", "total");
-                    ArrayNode outArray = objectMapper.createArrayNode();
-                    gb.totalOutcomes.forEach(outArray::add);
-                    totalMarket.set("outcomes", outArray);
-                    marketsArray.add(totalMarket);
-                }
-
-                List<GameOddsDTO.BookmakerDTO> bookmakers = new ArrayList<>();
-                if (!marketsArray.isEmpty()) {
-                    ObjectNode bookmakerNode = objectMapper.createObjectNode();
-                    bookmakerNode.put("key", "sharpapi");
-                    bookmakerNode.put("title", "SharpAPI");
-                    bookmakerNode.set("markets", marketsArray);
-
-                    GameOddsDTO.BookmakerDTO bmDTO = objectMapper.convertValue(
-                            bookmakerNode,
-                            new TypeReference<GameOddsDTO.BookmakerDTO>() {}
-                    );
-                    bookmakers.add(bmDTO);
-                }
-
-                formattedGames.add(new GameOddsDTO(gb.id, gb.homeTeam, gb.awayTeam, gb.commenceTime, bookmakers));
-            }
-
+            return objectMapper.convertValue(
+                    dataNode,
+                    new com.fasterxml.jackson.core.type.TypeReference<List<GameOddsDTO>>() {}
+            );
         } catch (Exception e) {
-            System.err.println("Error parsing SharpAPI response: " + e.getMessage());
+            System.err.println("Failed to parse SharpAPI response: " + e.getMessage());
+            return List.of();
         }
-
-        return formattedGames;
-    }
-
-    private static class GameDataBuilder {
-        String id;
-        String homeTeam;
-        String awayTeam;
-        Instant commenceTime;
-        List<JsonNode> spreadOutcomes = new ArrayList<>();
-        List<JsonNode> totalOutcomes = new ArrayList<>();
     }
 }

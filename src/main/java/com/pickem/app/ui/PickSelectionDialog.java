@@ -9,19 +9,21 @@ import com.pickem.app.service.OddsService;
 import com.pickem.app.service.PickService;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.combobox.ComboBox;
+import com.vaadin.flow.component.combobox.ComboBoxVariant;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Span;
+import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.textfield.TextField;
+import com.vaadin.flow.component.textfield.TextFieldVariant;
 import com.vaadin.flow.data.value.ValueChangeMode;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,7 +32,7 @@ import java.util.Map;
 public class PickSelectionDialog extends Dialog {
 
     private final VerticalLayout gameListContainer = new VerticalLayout();
-    private final List<Game> games; // Switched from GameOddsDTO to your local DB Game
+    private final List<Game> games;
     private final Map<String, TeamDTO> teamDataMap;
     private final GameSyncService gameSyncService;
     private final PickService pickService;
@@ -48,7 +50,6 @@ public class PickSelectionDialog extends Dialog {
         this.gameSyncService = gameSyncService;
         this.pickService = pickService;
 
-        // FETCH DIRECTLY FROM DB: Instant load times, zero rate limits!
         List<Game> fetchedGames = gameSyncService.getGamesForSportAndWeekFromDb(sport, weekNumber);
         this.games = fetchedGames != null ? fetchedGames : List.of();
 
@@ -56,13 +57,17 @@ public class PickSelectionDialog extends Dialog {
         getElement().getClassList().add("pick-dialog-overlay");
 
         setHeaderTitle("Select Pick for " + player.getName() + " (Slot " + slotNumber + ")");
-        setWidth("560px");
+        setWidth("100%");      // Expands to fill mobile screens
+        setMaxWidth("580px");  // Caps at a clean width on desktop
         setHeight("720px");
 
         this.teamDataMap = sport.equals("NCAAF") ? conferenceService.getTeamDataMap() : Map.of();
 
-        ComboBox<String> conferenceFilter = new ComboBox<>("Filter by Conference");
-        conferenceFilter.setWidthFull();
+        // --- COMPACT CONFERENCE FILTER ---
+        ComboBox<String> conferenceFilter = new ComboBox<>();
+        conferenceFilter.setPlaceholder("All Conferences");
+        conferenceFilter.setWidth("190px");
+        conferenceFilter.addThemeVariants(ComboBoxVariant.LUMO_SMALL);
         conferenceFilter.getElement().setAttribute("theme", "dark");
 
         if (sport.equals("NCAAF")) {
@@ -75,10 +80,13 @@ public class PickSelectionDialog extends Dialog {
         }
         conferenceFilter.setValue("All");
 
-        TextField searchField = new TextField("Search Team");
-        searchField.setPlaceholder("Type team name...");
+        // --- COMPACT SEARCH FIELD ---
+        TextField searchField = new TextField();
+        searchField.setPlaceholder("Search team name...");
         searchField.setClearButtonVisible(true);
+        searchField.setPrefixComponent(VaadinIcon.SEARCH.create());
         searchField.setWidthFull();
+        searchField.addThemeVariants(TextFieldVariant.LUMO_SMALL);
         searchField.getElement().setAttribute("theme", "dark");
         searchField.setValueChangeMode(ValueChangeMode.LAZY);
 
@@ -90,17 +98,25 @@ public class PickSelectionDialog extends Dialog {
             renderGames(conferenceFilter.getValue(), event.getValue(), player, slotNumber, sport, weekNumber, onPickSaved);
         });
 
+        // --- HORIZONTAL FILTER BAR ---
+        HorizontalLayout filterBar = new HorizontalLayout(conferenceFilter, searchField);
+        filterBar.setWidthFull();
+        filterBar.setSpacing(true);
+        filterBar.setAlignItems(FlexComponent.Alignment.CENTER);
+        filterBar.setFlexGrow(1, searchField);
+        filterBar.getStyle().set("margin-bottom", "10px");
+        filterBar.getStyle().set("flex-wrap", "wrap"); // NEW: Allows wrapping on mobile
+
         gameListContainer.setSizeFull();
         gameListContainer.getStyle().set("overflow-y", "auto");
         gameListContainer.getStyle().set("padding-right", "4px");
 
         renderGames("All", "", player, slotNumber, sport, weekNumber, onPickSaved);
 
-        VerticalLayout dialogLayout = new VerticalLayout(conferenceFilter, searchField, gameListContainer);
+        VerticalLayout dialogLayout = new VerticalLayout(filterBar, gameListContainer);
         dialogLayout.setPadding(false);
-        dialogLayout.setSpacing(true);
-        dialogLayout.setHeight("600px");
-        dialogLayout.setWidthFull();
+        dialogLayout.setSpacing(false);
+        dialogLayout.setSizeFull();
 
         add(dialogLayout);
 
@@ -147,7 +163,7 @@ public class PickSelectionDialog extends Dialog {
                 }
             }
 
-            // 3. EVALUATE GRACE PERIOD: Kicked off + 15 minutes
+            // 3. Grace Period Check: Kicked off + 15 minutes
             Instant nowTwo = Instant.now();
             boolean isLiveOrFinished = game.getCommenceTime() != null &&
                     game.getCommenceTime().plus(Duration.ofMinutes(15)).isBefore(nowTwo);
@@ -155,166 +171,177 @@ public class PickSelectionDialog extends Dialog {
             matchedCount++;
             String dualLogoUrls = getLogoUrl(awayTeam, sport) + "|" + getLogoUrl(homeTeam, sport);
 
-            // Fetch odds from your local Game object getters
             Double awayPoint = game.getAwaySpread();
             Double homePoint = game.getHomeSpread();
             Double overPoint = game.getOverTotal();
             Double underPoint = game.getUnderTotal();
 
-            // FORCE RENDER: Draw the card if odds exist OR if the game is already in progress
-            if (awayPoint != null || homePoint != null || overPoint != null || underPoint != null || isLiveOrFinished) {
+            // Unconditional render: draws cards even if odds are not yet posted
+            VerticalLayout gameCard = new VerticalLayout();
+            gameCard.getStyle().set("background-color", "#151d30");
+            gameCard.getStyle().set("border", isLiveOrFinished ? "1px solid #7f1d1d" : "1px solid #22304d");
+            gameCard.getStyle().set("border-radius", "12px");
+            gameCard.getStyle().set("padding", "14px");
+            gameCard.getStyle().set("margin-bottom", "12px");
+            gameCard.setSpacing(false);
 
-                VerticalLayout gameCard = new VerticalLayout();
-                gameCard.getStyle().set("background-color", "#151d30");
-                gameCard.getStyle().set("border", isLiveOrFinished ? "1px solid #7f1d1d" : "1px solid #22304d");
-                gameCard.getStyle().set("border-radius", "12px");
-                gameCard.getStyle().set("padding", "14px");
-                gameCard.getStyle().set("margin-bottom", "12px");
-                gameCard.setSpacing(false);
+            String matchNameStr = awayTeam + " @ " + homeTeam;
 
-                String matchNameStr = awayTeam + " @ " + homeTeam;
+            // --- START TIME HEADER ---
+            HorizontalLayout timeRow = new HorizontalLayout();
+            timeRow.setWidthFull();
+            timeRow.setJustifyContentMode(FlexComponent.JustifyContentMode.CENTER);
+            timeRow.getStyle().set("margin-bottom", "8px");
 
-                // --- START TIME HEADER ---
-                HorizontalLayout timeRow = new HorizontalLayout();
-                timeRow.setWidthFull();
-                timeRow.setJustifyContentMode(FlexComponent.JustifyContentMode.CENTER);
-                timeRow.getStyle().set("margin-bottom", "8px");
+            String timeString = game.getCommenceTime() != null ? timeFormatter.format(game.getCommenceTime()) + " PT" : "TBD";
+            Span timeSpan = new Span(isLiveOrFinished ? timeString + " • IN PROGRESS" : timeString);
+            timeSpan.getStyle().set("font-size", "0.85em");
 
-                String timeString = game.getCommenceTime() != null ? timeFormatter.format(game.getCommenceTime()) + " PT" : "TBD";
-                Span timeSpan = new Span(isLiveOrFinished ? timeString + " • IN PROGRESS" : timeString);
-                timeSpan.getStyle().set("font-size", "0.85em");
-
-                if (isLiveOrFinished) {
-                    timeSpan.getStyle().set("color", "#ef4444").set("font-weight", "600");
-                } else {
-                    timeSpan.getStyle().set("color", "#94a3b8");
-                }
-                timeRow.add(timeSpan);
-
-                // --- AWAY TEAM ROW ---
-                HorizontalLayout awayRow = new HorizontalLayout();
-                awayRow.setWidthFull();
-                awayRow.setAlignItems(FlexComponent.Alignment.CENTER);
-
-                Image awayLogo = new Image(getLogoUrl(awayTeam, sport), awayTeam + " logo");
-                awayLogo.setWidth("30px");
-                awayLogo.setHeight("30px");
-                Span awayName = new Span(awayTeam);
-                awayName.getStyle().set("font-weight", "500").set("color", "#f8fafc");
-
-                Button awayBtn = new Button();
-                if (isLiveOrFinished) {
-                    awayBtn.setText("Locked");
-                    awayBtn.setEnabled(false);
-                } else if (awayPoint != null) {
-                    boolean isBurned = pickService.isSelectionBurned(player.getId(), sport, weekNumber, game.getId(), "spread", awayTeam);
-
-                    if (isBurned) {
-                        awayBtn.setText("Burned");
-                        awayBtn.setEnabled(false);
-                    } else {
-                        String pointStr = awayPoint > 0 ? "+" + awayPoint : String.valueOf(awayPoint);
-                        awayBtn.setText(pointStr);
-                        String selectionStr = awayTeam + " " + pointStr;
-                        awayBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, getLogoUrl(awayTeam, sport), game.getId(), awayPoint, matchNameStr, "spread", awayTeam, onPickSaved));
-                    }
-                } else {
-                    awayBtn.setText("N/A");
-                    awayBtn.setEnabled(false);
-                }
-                awayBtn.setWidth("80px");
-                awayBtn.addClassName("odds-btn");
-
-                Button overBtn = new Button();
-                if (isLiveOrFinished) {
-                    overBtn.setText("Locked");
-                    overBtn.setEnabled(false);
-                } else if (overPoint != null) {
-                    boolean isBurned = pickService.isSelectionBurned(player.getId(), sport, weekNumber, game.getId(), "total", "Over");
-
-                    if (isBurned) {
-                        overBtn.setText("Burned");
-                        overBtn.setEnabled(false);
-                    } else {
-                        String pointStr = "O " + overPoint;
-                        overBtn.setText(pointStr);
-                        String selectionStr = matchNameStr + " " + pointStr;
-                        overBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, dualLogoUrls, game.getId(), overPoint, matchNameStr, "total", "Over", onPickSaved));
-                    }
-                } else {
-                    overBtn.setText("N/A");
-                    overBtn.setEnabled(false);
-                }
-                overBtn.setWidth("80px");
-                overBtn.addClassName("odds-btn");
-
-                awayRow.add(awayLogo, awayName, awayBtn, overBtn);
-                awayRow.expand(awayName);
-
-                // --- HOME TEAM ROW ---
-                HorizontalLayout homeRow = new HorizontalLayout();
-                homeRow.setWidthFull();
-                homeRow.setAlignItems(FlexComponent.Alignment.CENTER);
-                homeRow.getStyle().set("margin-top", "8px");
-
-                Image homeLogo = new Image(getLogoUrl(homeTeam, sport), homeTeam + " logo");
-                homeLogo.setWidth("30px");
-                homeLogo.setHeight("30px");
-                Span homeName = new Span(homeTeam);
-                homeName.getStyle().set("font-weight", "500").set("color", "#f8fafc");
-
-                Button homeBtn = new Button();
-                if (isLiveOrFinished) {
-                    homeBtn.setText("Locked");
-                    homeBtn.setEnabled(false);
-                } else if (homePoint != null) {
-                    boolean isBurned = pickService.isSelectionBurned(player.getId(), sport, weekNumber, game.getId(), "spread", homeTeam);
-
-                    if (isBurned) {
-                        homeBtn.setText("Burned");
-                        homeBtn.setEnabled(false);
-                    } else {
-                        String pointStr = homePoint > 0 ? "+" + homePoint : String.valueOf(homePoint);
-                        homeBtn.setText(pointStr);
-                        String selectionStr = homeTeam + " " + pointStr;
-                        homeBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, getLogoUrl(homeTeam, sport), game.getId(), homePoint, matchNameStr, "spread", homeTeam, onPickSaved));
-                    }
-                } else {
-                    homeBtn.setText("N/A");
-                    homeBtn.setEnabled(false);
-                }
-                homeBtn.setWidth("80px");
-                homeBtn.addClassName("odds-btn");
-
-                Button underBtn = new Button();
-                if (isLiveOrFinished) {
-                    underBtn.setText("Locked");
-                    underBtn.setEnabled(false);
-                } else if (underPoint != null) {
-                    boolean isBurned = pickService.isSelectionBurned(player.getId(), sport, weekNumber, game.getId(), "total", "Under");
-
-                    if (isBurned) {
-                        underBtn.setText("Burned");
-                        underBtn.setEnabled(false);
-                    } else {
-                        String pointStr = "U " + underPoint;
-                        underBtn.setText(pointStr);
-                        String selectionStr = matchNameStr + " " + pointStr;
-                        underBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, dualLogoUrls, game.getId(), underPoint, matchNameStr, "total", "Under", onPickSaved));
-                    }
-                } else {
-                    underBtn.setText("N/A");
-                    underBtn.setEnabled(false);
-                }
-                underBtn.setWidth("80px");
-                underBtn.addClassName("odds-btn");
-
-                homeRow.add(homeLogo, homeName, homeBtn, underBtn);
-                homeRow.expand(homeName);
-
-                gameCard.add(timeRow, awayRow, homeRow);
-                gameListContainer.add(gameCard);
+            if (isLiveOrFinished) {
+                timeSpan.getStyle().set("color", "#ef4444").set("font-weight", "600");
+            } else {
+                timeSpan.getStyle().set("color", "#94a3b8");
             }
+            timeRow.add(timeSpan);
+
+            // --- AWAY TEAM ROW ---
+            HorizontalLayout awayRow = new HorizontalLayout();
+            awayRow.setWidthFull();
+            awayRow.setAlignItems(FlexComponent.Alignment.CENTER);
+
+            Image awayLogo = new Image(getLogoUrl(awayTeam, sport), awayTeam + " logo");
+            awayLogo.setWidth("30px");
+            awayLogo.setHeight("30px");
+            // Update this block for BOTH awayName and homeName
+            Span awayName = new Span(awayTeam);
+            awayName.getStyle()
+                    .set("font-weight", "500")
+                    .set("color", "#f8fafc")
+                    .set("white-space", "nowrap")
+                    .set("overflow", "hidden")
+                    .set("text-overflow", "ellipsis")
+                    .set("min-width", "0")           // NEW: Forces Flexbox to apply truncation
+                    .set("margin-right", "8px");     // NEW: Breathing room before the buttons
+
+            Button awayBtn = new Button();
+            if (isLiveOrFinished) {
+                awayBtn.setText("Locked");
+                awayBtn.setEnabled(false);
+            } else if (awayPoint != null) {
+                boolean isBurned = pickService.isSelectionBurned(player.getId(), sport, weekNumber, game.getId(), "spread", awayTeam);
+
+                if (isBurned) {
+                    awayBtn.setText("Burned");
+                    awayBtn.setEnabled(false);
+                } else {
+                    String pointStr = awayPoint > 0 ? "+" + awayPoint : String.valueOf(awayPoint);
+                    awayBtn.setText(pointStr);
+                    String selectionStr = awayTeam + " " + pointStr;
+                    awayBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, getLogoUrl(awayTeam, sport), game.getId(), awayPoint, matchNameStr, "spread", awayTeam, onPickSaved));
+                }
+            } else {
+                awayBtn.setText("N/A");
+                awayBtn.setEnabled(false);
+            }
+            awayBtn.setWidth("72px"); // Changed from 80px
+            awayBtn.addClassName("odds-btn");
+
+            Button overBtn = new Button();
+            if (isLiveOrFinished) {
+                overBtn.setText("Locked");
+                overBtn.setEnabled(false);
+            } else if (overPoint != null) {
+                boolean isBurned = pickService.isSelectionBurned(player.getId(), sport, weekNumber, game.getId(), "total", "Over");
+
+                if (isBurned) {
+                    overBtn.setText("Burned");
+                    overBtn.setEnabled(false);
+                } else {
+                    String pointStr = "O " + overPoint;
+                    overBtn.setText(pointStr);
+                    String selectionStr = matchNameStr + " " + pointStr;
+                    overBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, dualLogoUrls, game.getId(), overPoint, matchNameStr, "total", "Over", onPickSaved));
+                }
+            } else {
+                overBtn.setText("N/A");
+                overBtn.setEnabled(false);
+            }
+            overBtn.setWidth("72px");
+            overBtn.addClassName("odds-btn");
+
+            awayRow.add(awayLogo, awayName, awayBtn, overBtn);
+            awayRow.expand(awayName);
+
+            // --- HOME TEAM ROW ---
+            HorizontalLayout homeRow = new HorizontalLayout();
+            homeRow.setWidthFull();
+            homeRow.setAlignItems(FlexComponent.Alignment.CENTER);
+            homeRow.getStyle().set("margin-top", "8px");
+
+            Image homeLogo = new Image(getLogoUrl(homeTeam, sport), homeTeam + " logo");
+            homeLogo.setWidth("30px");
+            homeLogo.setHeight("30px");
+            Span homeName = new Span(homeTeam);
+            homeName.getStyle()
+                    .set("font-weight", "500")
+                    .set("color", "#f8fafc")
+                    .set("white-space", "nowrap")
+                    .set("overflow", "hidden")
+                    .set("text-overflow", "ellipsis")
+                    .set("min-width", "0")           // NEW: Forces Flexbox to apply truncation
+                    .set("margin-right", "8px");     // NEW: Breathing room before the buttons
+
+            Button homeBtn = new Button();
+            if (isLiveOrFinished) {
+                homeBtn.setText("Locked");
+                homeBtn.setEnabled(false);
+            } else if (homePoint != null) {
+                boolean isBurned = pickService.isSelectionBurned(player.getId(), sport, weekNumber, game.getId(), "spread", homeTeam);
+
+                if (isBurned) {
+                    homeBtn.setText("Burned");
+                    homeBtn.setEnabled(false);
+                } else {
+                    String pointStr = homePoint > 0 ? "+" + homePoint : String.valueOf(homePoint);
+                    homeBtn.setText(pointStr);
+                    String selectionStr = homeTeam + " " + pointStr;
+                    homeBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, getLogoUrl(homeTeam, sport), game.getId(), homePoint, matchNameStr, "spread", homeTeam, onPickSaved));
+                }
+            } else {
+                homeBtn.setText("N/A");
+                homeBtn.setEnabled(false);
+            }
+            homeBtn.setWidth("72px");
+            homeBtn.addClassName("odds-btn");
+
+            Button underBtn = new Button();
+            if (isLiveOrFinished) {
+                underBtn.setText("Locked");
+                underBtn.setEnabled(false);
+            } else if (underPoint != null) {
+                boolean isBurned = pickService.isSelectionBurned(player.getId(), sport, weekNumber, game.getId(), "total", "Under");
+
+                if (isBurned) {
+                    underBtn.setText("Burned");
+                    underBtn.setEnabled(false);
+                } else {
+                    String pointStr = "U " + underPoint;
+                    underBtn.setText(pointStr);
+                    String selectionStr = matchNameStr + " " + pointStr;
+                    underBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, dualLogoUrls, game.getId(), underPoint, matchNameStr, "total", "Under", onPickSaved));
+                }
+            } else {
+                underBtn.setText("N/A");
+                underBtn.setEnabled(false);
+            }
+            underBtn.setWidth("72px");
+            underBtn.addClassName("odds-btn");
+
+            homeRow.add(homeLogo, homeName, homeBtn, underBtn);
+            homeRow.expand(homeName);
+
+            gameCard.add(timeRow, awayRow, homeRow);
+            gameListContainer.add(gameCard);
         }
 
         if (matchedCount == 0) {

@@ -2,7 +2,6 @@ package com.pickem.app.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.pickem.app.dto.GameOddsDTO;
-import com.pickem.app.dto.TeamDTO;
 import com.pickem.app.model.Game;
 import com.pickem.app.model.Pick;
 import com.pickem.app.model.Player;
@@ -76,11 +75,8 @@ public class GameSyncService {
         this.playerRecordRepo = playerRecordRepo;
     }
 
-    // Runs every 30 minutes (1,800,000 milliseconds)
     @Scheduled(fixedRate = 1800000)
-    @jakarta.annotation.PostConstruct
     public void init() {
-        syncAllOdds();
     }
 
     @Transactional
@@ -214,74 +210,71 @@ public class GameSyncService {
         }
     }
 
-    private void syncSport(List<GameOddsDTO> apiGames, String sport) {
-        if (apiGames == null || apiGames.isEmpty()) return;
+    private void syncSport(List<GameOddsDTO> apiOddsList, String sport) {
+        if (apiOddsList == null || apiOddsList.isEmpty()) return;
 
-        // 1. Extract all the IDs we got from the API
-        List<String> apiGameIds = apiGames.stream().map(GameOddsDTO::id).toList();
+        // 1. Group the flat SharpAPI rows by event_id so all odds for one game are bundled together
+        Map<String, List<GameOddsDTO>> oddsByGame = apiOddsList.stream()
+                .filter(dto -> dto.eventId() != null)
+                .collect(Collectors.groupingBy(GameOddsDTO::eventId));
 
-        // 2. Fetch all existing games from Supabase in ONE single query!
-        Map<String, Game> existingGamesMap = gameRepo.findAllById(apiGameIds).stream()
+        List<String> eventIds = new ArrayList<>(oddsByGame.keySet());
+        Map<String, Game> existingGamesMap = gameRepo.findAllById(eventIds).stream()
                 .collect(Collectors.toMap(Game::getId, g -> g));
 
-        List<Game> gamesToSave = new ArrayList<>();
+        Map<String, Game> gamesToSaveMap = new HashMap<>();
 
-        for (GameOddsDTO apiGame : apiGames) {
-            // Check our local map instead of querying the database
-            Game game = existingGamesMap.getOrDefault(apiGame.id(), new Game());
+        for (Map.Entry<String, List<GameOddsDTO>> entry : oddsByGame.entrySet()) {
+            String eventId = entry.getKey();
+            List<GameOddsDTO> gameOdds = entry.getValue();
 
-            // THE CLOSING LINE LOCK: If the game has already kicked off, skip it
+            // Grab the first row to get the base game info (teams, time)
+            GameOddsDTO baseInfo = gameOdds.get(0);
+
+            Game game = existingGamesMap.getOrDefault(eventId,
+                    gamesToSaveMap.getOrDefault(eventId, new Game()));
+
             if (game.getCommenceTime() != null && game.getCommenceTime().isBefore(Instant.now())) {
                 continue;
             }
 
-            // Map standard game details
-            game.setId(apiGame.id());
+            game.setId(eventId);
             game.setSport(sport);
-            game.setHomeTeam(apiGame.homeTeam());
-            game.setAwayTeam(apiGame.awayTeam());
-            game.setCommenceTime(apiGame.commenceTime());
+            game.setHomeTeam(baseInfo.homeTeam());
+            game.setAwayTeam(baseInfo.awayTeam());
+            game.setHomeLogo(getLogoUrl(baseInfo.homeTeam()));
+            game.setAwayLogo(getLogoUrl(baseInfo.awayTeam()));
+            game.setCommenceTime(baseInfo.eventStartTime());
 
-            // 3. Map the Logos from the cache!
-            // Assuming your Game model has setHomeLogo and setAwayLogo methods
-            game.setHomeTeam(getLogoUrl(apiGame.homeTeam()));
-            game.setAwayTeam(getLogoUrl(apiGame.awayTeam()));
+            // 2. Loop through the grouped rows to extract the actual point spreads and totals
+            // 2. Loop through the grouped rows to extract the actual point spreads and totals
+            for (GameOddsDTO odd : gameOdds) {
 
-            // Extract and map the Spread
-            apiGame.bookmakers().stream()
-                    .flatMap(b -> b.markets().stream())
-                    .filter(m -> "spreads".equalsIgnoreCase(m.key()))
-                    .findFirst()
-                    .ifPresent(market -> {
-                        for (GameOddsDTO.OutcomeDTO outcome : market.outcomes()) {
-                            if (outcome.name().equals(apiGame.awayTeam())) {
-                                game.setAwaySpread(outcome.point());
-                            } else if (outcome.name().equals(apiGame.homeTeam())) {
-                                game.setHomeSpread(outcome.point());
-                            }
-                        }
-                    });
+                // Match SharpAPI's exact market name: "point_spread"
+                if ("point_spread".equalsIgnoreCase(odd.marketType()) && odd.line() != null) {
 
-            // Extract and map the Totals
-            apiGame.bookmakers().stream()
-                    .flatMap(b -> b.markets().stream())
-                    .filter(m -> "totals".equalsIgnoreCase(m.key()))
-                    .findFirst()
-                    .ifPresent(market -> {
-                        for (GameOddsDTO.OutcomeDTO outcome : market.outcomes()) {
-                            if ("Over".equalsIgnoreCase(outcome.name())) {
-                                game.setOverTotal(outcome.point());
-                            } else if ("Under".equalsIgnoreCase(outcome.name())) {
-                                game.setUnderTotal(outcome.point());
-                            }
-                        }
-                    });
+                    if (odd.selection().equals(game.getAwayTeam())) {
+                        game.setAwaySpread(odd.line());
+                    } else if (odd.selection().equals(game.getHomeTeam())) {
+                        game.setHomeSpread(odd.line());
+                    }
+                }
 
-            gamesToSave.add(game);
+                // Match SharpAPI's exact market name: "total_points"
+                else if ("total_points".equalsIgnoreCase(odd.marketType()) && odd.line() != null) {
+
+                    if ("Over".equalsIgnoreCase(odd.selection())) {
+                        game.setOverTotal(odd.line());
+                    } else if ("Under".equalsIgnoreCase(odd.selection())) {
+                        game.setUnderTotal(odd.line());
+                    }
+                }
+            }
+
+            gamesToSaveMap.put(game.getId(), game);
         }
 
-        // 3. Save all updated games in one massive batch command
-        gameRepo.saveAll(gamesToSave);
+        gameRepo.saveAll(gamesToSaveMap.values());
     }
 
     public void buildLogoCache(JsonNode cfbdTeamsArray) {
@@ -360,9 +353,11 @@ public class GameSyncService {
     public java.util.List<com.pickem.app.model.Game> getGamesForSportAndWeekFromDb(String sport, int weekNumber) {
         java.util.List<com.pickem.app.model.Game> allGames = gameRepo.findAll();
 
+        // NFL Starts Tuesday (Sept 8) -> Ends Monday
+        // NCAAF Starts Sunday (Aug 30) -> Ends Saturday
         java.time.ZonedDateTime week1Start = "NFL".equalsIgnoreCase(sport)
                 ? java.time.ZonedDateTime.of(2026, 9, 8, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"))
-                : java.time.ZonedDateTime.of(2026, 9, 1, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
+                : java.time.ZonedDateTime.of(2026, 8, 30, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
 
         java.time.Instant windowStart = week1Start.plusDays((weekNumber - 1) * 7L).toInstant();
         java.time.Instant windowEnd = week1Start.plusDays(weekNumber * 7L).toInstant();

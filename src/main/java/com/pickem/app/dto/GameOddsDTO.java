@@ -1,36 +1,28 @@
 package com.pickem.app.dto;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
-
 import java.time.Instant;
-import java.util.List;
+import java.time.OffsetDateTime;
 
-@JsonIgnoreProperties(ignoreUnknown = true)
 public record GameOddsDTO(
-        String id,
+        @JsonProperty("event_id") String eventId,
         @JsonProperty("home_team") String homeTeam,
         @JsonProperty("away_team") String awayTeam,
-        @JsonProperty("commence_time") Instant commenceTime,
-        List<BookmakerDTO> bookmakers
+
+        // 1. Tell Jackson to safely grab the timestamp as a raw string so it doesn't crash
+        @JsonProperty("event_start_time") String rawEventStartTime,
+
+        @JsonProperty("market_type") String marketType,
+        @JsonProperty("selection") String selection,
+        @JsonProperty("line") Double line,
+        @JsonProperty("odds_american") Integer oddsAmerican
 ) {
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public record BookmakerDTO(
-            String title,
-            List<MarketDTO> markets
-    ) {}
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public record MarketDTO(
-            String key,
-            List<OutcomeDTO> outcomes
-    ) {}
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public record OutcomeDTO(
-            String name,
-            Double price,
-            Double point
-    ) {}
+    // 2. Provide a helper method that outputs an Instant for the rest of your app.
+    // OffsetDateTime effortlessly parses timestamps both with AND without the ":00" seconds!
+    public Instant eventStartTime() {
+        if (rawEventStartTime == null || rawEventStartTime.isBlank()) {
+            return null;
+        }
+        return OffsetDateTime.parse(rawEventStartTime).toInstant();
+    }
 }
