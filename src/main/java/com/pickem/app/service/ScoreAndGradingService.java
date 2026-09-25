@@ -13,8 +13,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.HashSet;
-import java.util.Set;
 
 @Service
 public class ScoreAndGradingService {
@@ -22,7 +20,7 @@ public class ScoreAndGradingService {
     private final OddsService oddsService;
     private final GameRepository gameRepository;
     private final PickRepository pickRepository;
-    private final PlayerRecordRepository playerRecordRepo; // NEW: Added to update standings
+    private final PlayerRecordRepository playerRecordRepo;
 
     public ScoreAndGradingService(OddsService oddsService, GameRepository gameRepository, PickRepository pickRepository, PlayerRecordRepository playerRecordRepo) {
         this.oddsService = oddsService;
@@ -31,8 +29,8 @@ public class ScoreAndGradingService {
         this.playerRecordRepo = playerRecordRepo;
     }
 
-    // Runs every 30 minutes to check for final scores and grade picks
-    @Scheduled(fixedDelay = 1800000)
+    // UPDATED: Runs at the top of every hour to stay fresh without hitting rate limits
+    @Scheduled(cron = "0 0 * * * *")
     public void syncScoresAndGrade() {
         System.out.println("Starting score sync and grading engine...");
 
@@ -51,30 +49,35 @@ public class ScoreAndGradingService {
         List<Game> pendingGames = gameRepository.findByCompletedFalse();
 
         for (ScoreDTO apiScore : apiScores) {
-            // Only process games that are fully completed and possess a dual-score array
-            if (Boolean.TRUE.equals(apiScore.completed()) && apiScore.scores() != null && apiScore.scores().size() == 2) {
+            // Only process games that are fully completed and possess at least 2 scores
+            if (Boolean.TRUE.equals(apiScore.completed()) && apiScore.scores() != null && apiScore.scores().size() >= 2) {
 
                 for (Game dbGame : pendingGames) {
-                    // Match by partial name since SharpAPI strings differ slightly from OddsAPI strings
-                    if (isTeamMatch(dbGame.getHomeTeam(), apiScore.homeTeam()) &&
-                            isTeamMatch(dbGame.getAwayTeam(), apiScore.awayTeam())) {
+                    // FIX 1: Check if both teams match, regardless of who the API says is "Home" or "Away"
+                    boolean homeInApi = isTeamMatch(dbGame.getHomeTeam(), apiScore.homeTeam()) || isTeamMatch(dbGame.getHomeTeam(), apiScore.awayTeam());
+                    boolean awayInApi = isTeamMatch(dbGame.getAwayTeam(), apiScore.homeTeam()) || isTeamMatch(dbGame.getAwayTeam(), apiScore.awayTeam());
 
-                        Integer homeScore = null;
-                        Integer awayScore = null;
+                    if (homeInApi && awayInApi) {
+                        Integer dbHomeScore = null;
+                        Integer dbAwayScore = null;
 
+                        // FIX 2: Map the API scores directly to the DB teams to avoid swapped Home/Away bugs
                         for (ScoreDTO.TeamScoreDTO ts : apiScore.scores()) {
                             try {
-                                if (ts.name().equals(apiScore.homeTeam())) {
-                                    homeScore = Integer.parseInt(ts.score());
-                                } else if (ts.name().equals(apiScore.awayTeam())) {
-                                    awayScore = Integer.parseInt(ts.score());
+                                // FIX 3: Parse as double first to prevent NumberFormatExceptions if the API sends "34.0"
+                                int parsedScore = (int) Double.parseDouble(ts.score()); 
+                                
+                                if (isTeamMatch(ts.name(), dbGame.getHomeTeam())) {
+                                    dbHomeScore = parsedScore;
+                                } else if (isTeamMatch(ts.name(), dbGame.getAwayTeam())) {
+                                    dbAwayScore = parsedScore;
                                 }
-                            } catch (NumberFormatException ignored) {}
+                            } catch (Exception ignored) {}
                         }
 
-                        if (homeScore != null && awayScore != null) {
-                            dbGame.setHomeScore(homeScore);
-                            dbGame.setAwayScore(awayScore);
+                        if (dbHomeScore != null && dbAwayScore != null) {
+                            dbGame.setHomeScore(dbHomeScore);
+                            dbGame.setAwayScore(dbAwayScore);
                             dbGame.setCompleted(true);
                             gameRepository.save(dbGame);
 
@@ -90,7 +93,6 @@ public class ScoreAndGradingService {
     @Transactional
     public void gradePicksForGame(Game game) {
         List<Pick> picks = pickRepository.findByGameIdAndStatus(game.getId(), "PENDING");
-        Set<String> playersToUpdate = new HashSet<>();
 
         for (Pick pick : picks) {
             String newStatus = "PENDING";
@@ -98,10 +100,11 @@ public class ScoreAndGradingService {
             if ("spread".equalsIgnoreCase(pick.getMarketType())) {
                 double spread = pick.getLockedPoint();
 
-                if (pick.getSelectionSide().equals(game.getHomeTeam())) {
+                // FIX 4: Added .trim().equalsIgnoreCase() to prevent spacing mismatch issues
+                if (pick.getSelectionSide().trim().equalsIgnoreCase(game.getHomeTeam().trim())) {
                     double adjustedHome = game.getHomeScore() + spread;
-                    if (adjustedHome > game.getAwayScore()) newStatus = "WIN"; // FIXED: Changed WON to WIN
-                    else if (adjustedHome < game.getAwayScore()) newStatus = "LOSS"; // FIXED: Changed LOST to LOSS
+                    if (adjustedHome > game.getAwayScore()) newStatus = "WIN";
+                    else if (adjustedHome < game.getAwayScore()) newStatus = "LOSS";
                     else newStatus = "PUSH";
                 } else {
                     double adjustedAway = game.getAwayScore() + spread;
@@ -114,11 +117,11 @@ public class ScoreAndGradingService {
                 double totalScore = game.getHomeScore() + game.getAwayScore();
                 double lockedTotal = pick.getLockedPoint();
 
-                if ("Over".equalsIgnoreCase(pick.getSelectionSide())) {
+                if ("Over".equalsIgnoreCase(pick.getSelectionSide().trim())) {
                     if (totalScore > lockedTotal) newStatus = "WIN";
                     else if (totalScore < lockedTotal) newStatus = "LOSS";
                     else newStatus = "PUSH";
-                } else if ("Under".equalsIgnoreCase(pick.getSelectionSide())) {
+                } else if ("Under".equalsIgnoreCase(pick.getSelectionSide().trim())) {
                     if (totalScore < lockedTotal) newStatus = "WIN";
                     else if (totalScore > lockedTotal) newStatus = "LOSS";
                     else newStatus = "PUSH";
@@ -135,7 +138,6 @@ public class ScoreAndGradingService {
         }
     }
 
-    // NEW: Automatically calculates Weekly and Overall records so the Leaderboard updates instantly
     private void updatePlayerRecords(Player player, String sport, int weekNumber) {
         List<Pick> allSportPicks = pickRepository.findByPlayerIdAndSport(player.getId(), sport);
 
@@ -147,12 +149,10 @@ public class ScoreAndGradingService {
             boolean isLoss = "LOSS".equals(p.getStatus());
             boolean isPush = "PUSH".equals(p.getStatus());
 
-            // Add to overall records
             if (isWin) overallWins++;
             if (isLoss) overallLosses++;
             if (isPush) overallPushes++;
 
-            // Add to weekly records if the week matches
             if (p.getWeekNumber() != null && p.getWeekNumber() == weekNumber) {
                 if (isWin) weeklyWins++;
                 if (isLoss) weeklyLosses++;
@@ -160,7 +160,6 @@ public class ScoreAndGradingService {
             }
         }
 
-        // 1. Save Weekly Record
         PlayerRecord weeklyRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, weekNumber)
                 .orElse(new PlayerRecord(player, sport, weekNumber));
         weeklyRecord.setWins(weeklyWins);
@@ -168,7 +167,6 @@ public class ScoreAndGradingService {
         weeklyRecord.setPushes(weeklyPushes);
         playerRecordRepo.save(weeklyRecord);
 
-        // 2. Save Overall Record (Stored as Week 0)
         PlayerRecord overallRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, 0)
                 .orElse(new PlayerRecord(player, sport, 0));
         overallRecord.setWins(overallWins);
