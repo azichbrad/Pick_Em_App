@@ -16,6 +16,12 @@ public class Player {
     private Integer losses = 0;
     private Integer pushes = 0;
 
+
+    @Column(unique = true)
+    private String email;
+
+    private boolean admin;
+
     // --- GETTERS AND SETTERS ---
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -31,4 +37,10 @@ public class Player {
 
     public Integer getPushes() { return pushes; }
     public void setPushes(Integer pushes) { this.pushes = pushes; }
+
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+
+    public boolean isAdmin() { return admin; }
+    public void setAdmin(boolean admin) { this.admin = admin; }
 }

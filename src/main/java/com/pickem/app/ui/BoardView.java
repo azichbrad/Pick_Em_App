@@ -19,13 +19,15 @@ import com.vaadin.flow.component.tabs.TabSheet;
 import com.vaadin.flow.component.tabs.TabSheetVariant;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.theme.lumo.Lumo;
+import jakarta.annotation.security.PermitAll;
 
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.IntStream;
 
-@Route("")
+@Route("board")
 @CssImport("./styles.css")
+@PermitAll
 public class BoardView extends VerticalLayout {
 
     private final PlayerRepository playerRepo;

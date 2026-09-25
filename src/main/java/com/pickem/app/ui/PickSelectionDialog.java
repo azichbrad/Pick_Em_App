@@ -21,6 +21,8 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.component.textfield.TextFieldVariant;
 import com.vaadin.flow.data.value.ValueChangeMode;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -365,6 +367,12 @@ public class PickSelectionDialog extends Dialog {
                             String logoUrl, String gameId, Double lockedPoint, String matchName,
                             String marketType, String selectionSide, Runnable onPickSaved) {
 
+        // Security check: ensure logged-in user owns this player slot
+        if (!canUserEditPlayer(player)) {
+            System.out.println("Unauthorized pick attempt for player: " + player.getName());
+            return;
+        }
+
         pickService.savePickWithBurnCheck(player, slotNumber, sport, weekNumber, selection, logoUrl, gameId, lockedPoint, matchName, marketType, selectionSide, onPickSaved);
         close();
     }
@@ -393,5 +401,25 @@ public class PickSelectionDialog extends Dialog {
         String conf = teamData != null ? teamData.conference() : "Other";
         localConferenceCache.put(teamName, conf);
         return conf;
+    }
+
+    private boolean canUserEditPlayer(Player targetPlayer) {
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (principal instanceof OAuth2User oauth2User) {
+            String loggedInEmail = oauth2User.getAttribute("email");
+            if (loggedInEmail == null) return false;
+
+            // 1. Allow if the logged-in user's email matches the target player's assigned email
+            if (targetPlayer.getEmail() != null && targetPlayer.getEmail().equalsIgnoreCase(loggedInEmail)) {
+                return true;
+            }
+
+            // 2. Allow if the logged-in user is Brad (Admin) based on the database flag
+            // (Assumes you set admin = true for your player row in Supabase)
+            if (targetPlayer.isAdmin() && targetPlayer.getEmail() != null && targetPlayer.getEmail().equalsIgnoreCase(loggedInEmail)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
