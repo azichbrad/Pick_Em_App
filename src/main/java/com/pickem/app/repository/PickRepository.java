@@ -11,6 +11,7 @@ public interface PickRepository extends JpaRepository<Pick, Long> {
 
     Optional<Pick> findByPlayerIdAndWeekNumberAndSlotNumber(Long playerId, Integer weekNumber, Integer slotNumber);
 
+    List<Pick> findByGameIdAndStatus(String gameId, String status);
     List<Pick> findByWeekNumberAndSport(Integer weekNumber, String sport);
 
     // --- ADD THIS NEW METHOD HERE ---

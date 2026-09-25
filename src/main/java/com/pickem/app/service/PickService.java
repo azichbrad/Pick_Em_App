@@ -4,6 +4,7 @@ import com.pickem.app.model.BurnedSelection;
 import com.pickem.app.model.Pick;
 import com.pickem.app.model.Player;
 import com.pickem.app.repository.BurnedSelectionRepository;
+import com.pickem.app.repository.GameRepository;
 import com.pickem.app.repository.PickRepository;
 import com.vaadin.flow.component.notification.Notification;
 import org.springframework.stereotype.Service;
@@ -14,12 +15,16 @@ import java.util.Optional;
 @Service
 public class PickService {
 
+    // 1. Add GameRepository to your variables
     private final PickRepository pickRepo;
     private final BurnedSelectionRepository burnedSelectionRepo;
+    private final GameRepository gameRepo;
 
-    public PickService(PickRepository pickRepo, BurnedSelectionRepository burnedSelectionRepo) {
+    // 2. Inject it into the constructor
+    public PickService(PickRepository pickRepo, BurnedSelectionRepository burnedSelectionRepo, GameRepository gameRepo) {
         this.pickRepo = pickRepo;
         this.burnedSelectionRepo = burnedSelectionRepo;
+        this.gameRepo = gameRepo;
     }
 
     public boolean isSelectionBurned(Long playerId, String sport, int weekNumber, String gameId, String marketType, String selectionSide) {
@@ -32,10 +37,14 @@ public class PickService {
                                       String selection, String logoUrl, String gameId, Double lockedPoint,
                                       String matchName, String marketType, String selectionSide, Runnable onPickSaved) {
 
-        // 1. Hard validation catch just in case the UI check gets bypassed
-        if (isSelectionBurned(player.getId(), sport, weekNumber, gameId, marketType, selectionSide)) {
-            Notification.show("This selection is burned for the week!", 3000, Notification.Position.MIDDLE);
-            return;
+        // 3. HARD BACKEND LOCK: Block any picks 15 minutes past kickoff
+        com.pickem.app.model.Game game = gameRepo.findById(gameId).orElse(null);
+        if (game != null && game.getCommenceTime() != null) {
+            java.time.Instant liveCutoff = java.time.Instant.now().minus(java.time.Duration.ofMinutes(15));
+            if (game.getCommenceTime().isBefore(liveCutoff)) {
+                Notification.show("Too late! This game has already locked.", 4000, Notification.Position.MIDDLE);
+                return;
+            }
         }
 
         // 2. Fetch the existing pick for this slot

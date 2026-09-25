@@ -38,7 +38,6 @@ public class BoardView extends VerticalLayout {
     private final PickRepository pickRepository;
     private final PickService pickService;
 
-    // 2. Update the constructor to accept the new service
     public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService,
                      ConferenceService conferenceService, GradingService gradingService,
                      GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo, PlayerRecordRepository playerRecordRepo1,
@@ -47,7 +46,7 @@ public class BoardView extends VerticalLayout {
         this.pickRepo = pickRepo;
         this.oddsService = oddsService;
         this.conferenceService = conferenceService;
-        this.gradingService = gradingService; // 3. Assign it
+        this.gradingService = gradingService;
         this.gameSyncService = gameSyncService;
         this.playerRecordRepo = playerRecordRepo1;
         this.pickRepository = pickRepository;
@@ -68,7 +67,6 @@ public class BoardView extends VerticalLayout {
         tabSheet.setSizeFull();
         tabSheet.addThemeVariants(TabSheetVariant.LUMO_TABS_CENTERED, TabSheetVariant.LUMO_BORDERED);
 
-        // 1. College Football tab label with absolute static path
         Image collegeLogo = new Image("/images/cfp.png", "College Football Logo");
         collegeLogo.setWidth("20px");
         collegeLogo.setHeight("20px");
@@ -78,7 +76,6 @@ public class BoardView extends VerticalLayout {
         collegeTabLabel.setAlignItems(Alignment.CENTER);
         collegeTabLabel.setSpacing(false);
 
-        // 2. NFL tab label with absolute static path
         Image nflLogo = new Image("/images/nfl.png", "NFL Logo");
         nflLogo.setWidth("20px");
         nflLogo.setHeight("20px");
@@ -88,7 +85,6 @@ public class BoardView extends VerticalLayout {
         nflTabLabel.setAlignItems(Alignment.CENTER);
         nflTabLabel.setSpacing(false);
 
-        // 3. Add to TabSheet
         tabSheet.add(collegeTabLabel, createTabContent("NCAAF"));
         tabSheet.add(nflTabLabel, createTabContent("NFL"));
 
@@ -112,10 +108,12 @@ public class BoardView extends VerticalLayout {
             weekSelector.setItems(IntStream.rangeClosed(1, 18).boxed().toList());
         }
         weekSelector.setItemLabelGenerator(week -> formatWeekLabel(sport, week));
-        weekSelector.setValue(sport.equals("NCAAF") ? 0 : 1);
+
+        // FIXED: Dynamically load the current week instead of hardcoding 0 or 1!
+        weekSelector.setValue(calculateCurrentWeek(sport));
+
         weekSelector.setWidth("220px");
 
-        // 1. MOVE THIS UP: Create the grid FIRST so the button can see it
         VerticalLayout boardGrid = new VerticalLayout();
         boardGrid.setSizeFull();
         boardGrid.setPadding(false);
@@ -125,7 +123,6 @@ public class BoardView extends VerticalLayout {
 
         controls.add(leftControls);
 
-        // 3. Initial render and listeners
         renderPlayerColumns(boardGrid, sport, weekSelector.getValue());
 
         weekSelector.addValueChangeListener(event -> {
@@ -138,30 +135,24 @@ public class BoardView extends VerticalLayout {
         return container;
     }
 
-    // Inside renderPlayerColumns in BoardView.java:
-
     private void renderPlayerColumns(VerticalLayout boardGrid, String sport, Integer selectedWeek) {
-        long startTime = System.currentTimeMillis(); // Optional: track speed
+        long startTime = System.currentTimeMillis();
         boardGrid.removeAll();
 
-        // --- 1. BATCH FETCH ALL RECORDS FOR THIS SPORT/WEEK (Zero loop-queries) ---
         List<PlayerRecord> overallRecords = playerRecordRepo.findBySportAndWeekNumber(sport, 0);
         overallRecords.sort((a, b) -> Integer.compare(b.getWins(), a.getWins()));
 
         List<PlayerRecord> weeklyRecords = playerRecordRepo.findBySportAndWeekNumber(sport, selectedWeek);
-        // Map player ID to their weekly record for O(1) lightning-fast lookups
         java.util.Map<Long, PlayerRecord> weeklyRecordMap = weeklyRecords.stream()
                 .collect(java.util.stream.Collectors.toMap(r -> r.getPlayer().getId(), r -> r));
 
         List<Pick> weeklyPicList = pickRepo.findByWeekNumberAndSport(selectedWeek, sport);
-        // Map player ID -> Map<SlotNumber, Pick> for instant slot matching
         java.util.Map<Long, java.util.Map<Integer, Pick>> playerPicksMap = weeklyPicList.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
                         p -> p.getPlayer().getId(),
                         java.util.stream.Collectors.toMap(Pick::getSlotNumber, p -> p, (p1, p2) -> p1)
                 ));
 
-        // --- 2. CREATE LEADERBOARD BAR ---
         HorizontalLayout leaderboardBar = new HorizontalLayout();
         leaderboardBar.setWidthFull();
         leaderboardBar.getStyle().set("background", "#1e293b").set("padding", "10px 16px").set("border-radius", "8px");
@@ -178,7 +169,6 @@ public class BoardView extends VerticalLayout {
         }
         boardGrid.add(leaderboardBar);
 
-        // --- 3. SORT PLAYERS IN-MEMORY USING THE MAP ---
         List<Player> players = playerRepo.findAll();
         players.sort((p1, p2) -> {
             PlayerRecord r1 = weeklyRecordMap.getOrDefault(p1.getId(), new PlayerRecord(p1, sport, selectedWeek));
@@ -190,7 +180,6 @@ public class BoardView extends VerticalLayout {
             return Integer.compare(r1.getLosses(), r2.getLosses());
         });
 
-        // --- 4. RENDER PLAYER CARDS ---
         for (Player player : players) {
             VerticalLayout playerCard = new VerticalLayout();
             playerCard.setPadding(true);
@@ -211,7 +200,6 @@ public class BoardView extends VerticalLayout {
             H2 name = new H2(player.getName());
             name.getStyle().set("margin", "0").set("font-size", "1.25rem").set("font-weight", "700");
 
-            // Pull weekly stats instantly from map instead of individual queries
             PlayerRecord currentWeekRec = weeklyRecordMap.getOrDefault(player.getId(), new PlayerRecord(player, sport, selectedWeek));
             Span recordBadge = new Span(currentWeekRec.getWins() + "W - " + currentWeekRec.getLosses() + "L - " + currentWeekRec.getPushes() + "P");
             recordBadge.getStyle()
@@ -226,11 +214,9 @@ public class BoardView extends VerticalLayout {
             playerHeader.add(name, recordBadge);
             playerCard.add(playerHeader);
 
-            // Get player's picks map for this week
             java.util.Map<Integer, Pick> slotPickMap = playerPicksMap.getOrDefault(player.getId(), java.util.Map.of());
             boolean weekLocked = isWeekLocked(sport, selectedWeek);
 
-            // Render 5 Pick Slots
             for (int slot = 1; slot <= 5; slot++) {
                 int currentSlot = slot;
                 Pick existingPick = slotPickMap.get(currentSlot);
@@ -371,8 +357,26 @@ public class BoardView extends VerticalLayout {
                 ? java.time.ZonedDateTime.of(2026, 9, 8, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"))
                 : java.time.ZonedDateTime.of(2026, 9, 1, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
 
-        // The window ends 7 days after the start of the specified week
         java.time.Instant windowEnd = week1Start.plusDays(weekNumber * 7L).toInstant();
         return java.time.Instant.now().isAfter(windowEnd);
+    }
+
+    private int calculateCurrentWeek(String sport) {
+        java.time.ZoneId zone = java.time.ZoneId.of("America/Los_Angeles");
+        java.time.ZonedDateTime now = java.time.ZonedDateTime.now(zone);
+
+        java.time.ZonedDateTime week1Start = "NFL".equalsIgnoreCase(sport)
+                ? java.time.ZonedDateTime.of(2026, 9, 8, 0, 0, 0, 0, zone)
+                : java.time.ZonedDateTime.of(2026, 8, 30, 0, 0, 0, 0, zone);
+
+        if (now.isBefore(week1Start)) {
+            return "NCAAF".equalsIgnoreCase(sport) ? 0 : 1;
+        }
+
+        long daysBetween = java.time.temporal.ChronoUnit.DAYS.between(week1Start, now);
+        int currentWeek = (int) (daysBetween / 7) + 1;
+
+        int maxWeek = "NFL".equalsIgnoreCase(sport) ? 18 : 16;
+        return Math.min(currentWeek, maxWeek);
     }
 }

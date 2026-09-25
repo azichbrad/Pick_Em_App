@@ -12,7 +12,7 @@ public interface GameRepository extends JpaRepository<Game, String> {
 
     // We will use this to grab the cached games for the UI
     List<Game> findBySportOrderByCommenceTimeAsc(String sport);
-
+    List<Game> findByCompletedFalse();
     // We will use this to find games that need live scores updated
     List<Game> findByCompletedFalseAndCommenceTimeBefore(Instant currentTime);
 }
