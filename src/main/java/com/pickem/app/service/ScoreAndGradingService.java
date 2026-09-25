@@ -3,13 +3,18 @@ package com.pickem.app.service;
 import com.pickem.app.dto.ScoreDTO;
 import com.pickem.app.model.Game;
 import com.pickem.app.model.Pick;
+import com.pickem.app.model.Player;
+import com.pickem.app.model.PlayerRecord;
 import com.pickem.app.repository.GameRepository;
 import com.pickem.app.repository.PickRepository;
+import com.pickem.app.repository.PlayerRecordRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 
 @Service
 public class ScoreAndGradingService {
@@ -17,11 +22,13 @@ public class ScoreAndGradingService {
     private final OddsService oddsService;
     private final GameRepository gameRepository;
     private final PickRepository pickRepository;
+    private final PlayerRecordRepository playerRecordRepo; // NEW: Added to update standings
 
-    public ScoreAndGradingService(OddsService oddsService, GameRepository gameRepository, PickRepository pickRepository) {
+    public ScoreAndGradingService(OddsService oddsService, GameRepository gameRepository, PickRepository pickRepository, PlayerRecordRepository playerRecordRepo) {
         this.oddsService = oddsService;
         this.gameRepository = gameRepository;
         this.pickRepository = pickRepository;
+        this.playerRecordRepo = playerRecordRepo;
     }
 
     // Runs every 30 minutes to check for final scores and grade picks
@@ -83,6 +90,7 @@ public class ScoreAndGradingService {
     @Transactional
     public void gradePicksForGame(Game game) {
         List<Pick> picks = pickRepository.findByGameIdAndStatus(game.getId(), "PENDING");
+        Set<String> playersToUpdate = new HashSet<>();
 
         for (Pick pick : picks) {
             String newStatus = "PENDING";
@@ -92,13 +100,13 @@ public class ScoreAndGradingService {
 
                 if (pick.getSelectionSide().equals(game.getHomeTeam())) {
                     double adjustedHome = game.getHomeScore() + spread;
-                    if (adjustedHome > game.getAwayScore()) newStatus = "WON";
-                    else if (adjustedHome < game.getAwayScore()) newStatus = "LOST";
+                    if (adjustedHome > game.getAwayScore()) newStatus = "WIN"; // FIXED: Changed WON to WIN
+                    else if (adjustedHome < game.getAwayScore()) newStatus = "LOSS"; // FIXED: Changed LOST to LOSS
                     else newStatus = "PUSH";
                 } else {
                     double adjustedAway = game.getAwayScore() + spread;
-                    if (adjustedAway > game.getHomeScore()) newStatus = "WON";
-                    else if (adjustedAway < game.getHomeScore()) newStatus = "LOST";
+                    if (adjustedAway > game.getHomeScore()) newStatus = "WIN";
+                    else if (adjustedAway < game.getHomeScore()) newStatus = "LOSS";
                     else newStatus = "PUSH";
                 }
             }
@@ -107,12 +115,12 @@ public class ScoreAndGradingService {
                 double lockedTotal = pick.getLockedPoint();
 
                 if ("Over".equalsIgnoreCase(pick.getSelectionSide())) {
-                    if (totalScore > lockedTotal) newStatus = "WON";
-                    else if (totalScore < lockedTotal) newStatus = "LOST";
+                    if (totalScore > lockedTotal) newStatus = "WIN";
+                    else if (totalScore < lockedTotal) newStatus = "LOSS";
                     else newStatus = "PUSH";
                 } else if ("Under".equalsIgnoreCase(pick.getSelectionSide())) {
-                    if (totalScore < lockedTotal) newStatus = "WON";
-                    else if (totalScore > lockedTotal) newStatus = "LOST";
+                    if (totalScore < lockedTotal) newStatus = "WIN";
+                    else if (totalScore > lockedTotal) newStatus = "LOSS";
                     else newStatus = "PUSH";
                 }
             }
@@ -120,8 +128,53 @@ public class ScoreAndGradingService {
             pick.setStatus(newStatus);
             pickRepository.save(pick);
 
-            // TODO: We can trigger the PlayerRecord / Standings updates right here next!
+            // Track the player and week to recalculate records
+            if (pick.getPlayer() != null && pick.getWeekNumber() != null) {
+                updatePlayerRecords(pick.getPlayer(), game.getSport(), pick.getWeekNumber());
+            }
         }
+    }
+
+    // NEW: Automatically calculates Weekly and Overall records so the Leaderboard updates instantly
+    private void updatePlayerRecords(Player player, String sport, int weekNumber) {
+        List<Pick> allSportPicks = pickRepository.findByPlayerIdAndSport(player.getId(), sport);
+
+        int overallWins = 0, overallLosses = 0, overallPushes = 0;
+        int weeklyWins = 0, weeklyLosses = 0, weeklyPushes = 0;
+
+        for (Pick p : allSportPicks) {
+            boolean isWin = "WIN".equals(p.getStatus());
+            boolean isLoss = "LOSS".equals(p.getStatus());
+            boolean isPush = "PUSH".equals(p.getStatus());
+
+            // Add to overall records
+            if (isWin) overallWins++;
+            if (isLoss) overallLosses++;
+            if (isPush) overallPushes++;
+
+            // Add to weekly records if the week matches
+            if (p.getWeekNumber() != null && p.getWeekNumber() == weekNumber) {
+                if (isWin) weeklyWins++;
+                if (isLoss) weeklyLosses++;
+                if (isPush) weeklyPushes++;
+            }
+        }
+
+        // 1. Save Weekly Record
+        PlayerRecord weeklyRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, weekNumber)
+                .orElse(new PlayerRecord(player, sport, weekNumber));
+        weeklyRecord.setWins(weeklyWins);
+        weeklyRecord.setLosses(weeklyLosses);
+        weeklyRecord.setPushes(weeklyPushes);
+        playerRecordRepo.save(weeklyRecord);
+
+        // 2. Save Overall Record (Stored as Week 0)
+        PlayerRecord overallRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, 0)
+                .orElse(new PlayerRecord(player, sport, 0));
+        overallRecord.setWins(overallWins);
+        overallRecord.setLosses(overallLosses);
+        overallRecord.setPushes(overallPushes);
+        playerRecordRepo.save(overallRecord);
     }
 
     private boolean isTeamMatch(String dbTeam, String apiTeam) {

@@ -367,6 +367,8 @@ public class GameSyncService {
                 .filter(g -> g.getCommenceTime() != null &&
                         !g.getCommenceTime().isBefore(windowStart) &&
                         g.getCommenceTime().isBefore(windowEnd))
+                // FIXED: Sort chronologically by kickoff time
+                .sorted(java.util.Comparator.comparing(com.pickem.app.model.Game::getCommenceTime))
                 .toList();
     }
 }

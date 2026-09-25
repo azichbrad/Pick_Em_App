@@ -101,33 +101,59 @@ public class BoardView extends VerticalLayout {
         controls.setJustifyContentMode(JustifyContentMode.BETWEEN);
         controls.setAlignItems(Alignment.CENTER);
 
+        int minWeek = sport.equals("NCAAF") ? 0 : 1;
+        int maxWeek = sport.equals("NCAAF") ? 19 : 18;
+
         ComboBox<Integer> weekSelector = new ComboBox<>("Week");
-        if (sport.equals("NCAAF")) {
-            weekSelector.setItems(IntStream.rangeClosed(0, 19).boxed().toList());
-        } else {
-            weekSelector.setItems(IntStream.rangeClosed(1, 18).boxed().toList());
-        }
+        weekSelector.setItems(IntStream.rangeClosed(minWeek, maxWeek).boxed().toList());
         weekSelector.setItemLabelGenerator(week -> formatWeekLabel(sport, week));
-
-        // FIXED: Dynamically load the current week instead of hardcoding 0 or 1!
         weekSelector.setValue(calculateCurrentWeek(sport));
-
         weekSelector.setWidth("220px");
+
+        // 1. Create the Left Arrow (Previous Week)
+        Button prevButton = new Button(com.vaadin.flow.component.icon.VaadinIcon.ANGLE_LEFT.create());
+        prevButton.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_ICON, com.vaadin.flow.component.button.ButtonVariant.LUMO_TERTIARY);
+        prevButton.addClickListener(e -> {
+            Integer current = weekSelector.getValue();
+            if (current != null && current > minWeek) {
+                weekSelector.setValue(current - 1);
+            }
+        });
+
+        // 2. Create the Right Arrow (Next Week)
+        Button nextButton = new Button(com.vaadin.flow.component.icon.VaadinIcon.ANGLE_RIGHT.create());
+        nextButton.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_ICON, com.vaadin.flow.component.button.ButtonVariant.LUMO_TERTIARY);
+        nextButton.addClickListener(e -> {
+            Integer current = weekSelector.getValue();
+            if (current != null && current < maxWeek) {
+                weekSelector.setValue(current + 1);
+            }
+        });
 
         VerticalLayout boardGrid = new VerticalLayout();
         boardGrid.setSizeFull();
         boardGrid.setPadding(false);
 
-        HorizontalLayout leftControls = new HorizontalLayout(weekSelector);
-        leftControls.setAlignItems(Alignment.BASELINE);
+        // 3. Group the arrows and dropdown together
+        HorizontalLayout leftControls = new HorizontalLayout(prevButton, weekSelector, nextButton);
+        // Use Alignment.END so the arrows align with the input box, not the "Week" label
+        leftControls.setAlignItems(Alignment.END);
 
         controls.add(leftControls);
+
+        // 4. Initial render and listeners
+        prevButton.setEnabled(weekSelector.getValue() > minWeek);
+        nextButton.setEnabled(weekSelector.getValue() < maxWeek);
 
         renderPlayerColumns(boardGrid, sport, weekSelector.getValue());
 
         weekSelector.addValueChangeListener(event -> {
-            if (event.getValue() != null) {
-                renderPlayerColumns(boardGrid, sport, event.getValue());
+            Integer val = event.getValue();
+            if (val != null) {
+                // Instantly lock/unlock the arrows if we hit the boundary
+                prevButton.setEnabled(val > minWeek);
+                nextButton.setEnabled(val < maxWeek);
+                renderPlayerColumns(boardGrid, sport, val);
             }
         });
 

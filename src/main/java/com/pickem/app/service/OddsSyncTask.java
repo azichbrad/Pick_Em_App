@@ -12,8 +12,8 @@ public class OddsSyncTask {
         this.gameSyncService = gameSyncService;
     }
 
-    // FIXED: Only one thread executes. Waits 5 seconds after boot, then every 2 mins.
-    @Scheduled(initialDelay = 5000, fixedDelay = 120000)
+    // Now safely runs every 30 minutes in the background
+    @Scheduled(initialDelay = 5000, fixedDelay = 1800000)
     public void syncOddsToDatabase() {
         System.out.println("Starting odds sync trigger...");
 

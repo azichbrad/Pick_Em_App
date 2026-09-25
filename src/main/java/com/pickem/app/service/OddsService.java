@@ -46,14 +46,14 @@ public class OddsService {
     @Cacheable("ncaafOdds")
     public List<GameOddsDTO> getCollegeFootballOdds() {
         // FIXED: Using exact market_type names to filter out 1st-half/quarter noise
-        String baseUrl = "https://api.sharpapi.io/api/v1/odds?league=NCAAF&market_type=point_spread,total_points&limit=200";
+        String baseUrl = "https://api.sharpapi.io/api/v1/events?sport=football&league=NCAAF&sportsbook=fanduel&limit=200&market_types=point_spread,total_points&days_from_now=7";
         return parseSharpApiResponse(fetchAllSharpApiOdds(baseUrl));
     }
 
     @Cacheable("nflOdds")
     public List<GameOddsDTO> getNflOdds() {
         // FIXED: Using exact market_type names to filter out 1st-half/quarter noise
-        String baseUrl = "https://api.sharpapi.io/api/v1/odds?league=NFL&market_type=point_spread,total_points&limit=200";
+        String baseUrl = "https://api.sharpapi.io/api/v1/events?sport=football&league=NFL&sportsbook=fanduel&limit=200&market_types=point_spread,total_points&days_from_now=7";
         return parseSharpApiResponse(fetchAllSharpApiOdds(baseUrl));
     }
 
