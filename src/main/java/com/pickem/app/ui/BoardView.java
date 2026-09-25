@@ -153,6 +153,13 @@ public class BoardView extends VerticalLayout {
                         java.util.stream.Collectors.toMap(Pick::getSlotNumber, p -> p, (p1, p2) -> p1)
                 ));
 
+        // NEW: Fetch all games for the week once to check individual lock times instantly
+        List<com.pickem.app.model.Game> weeklyGames = gameSyncService.getGamesForSportAndWeekFromDb(sport, selectedWeek);
+        java.util.Map<String, com.pickem.app.model.Game> gamesMap = weeklyGames == null ? java.util.Map.of() :
+                weeklyGames.stream().collect(java.util.stream.Collectors.toMap(com.pickem.app.model.Game::getId, g -> g));
+
+        java.time.Instant liveCutoff = java.time.Instant.now().minus(java.time.Duration.ofMinutes(15));
+
         HorizontalLayout leaderboardBar = new HorizontalLayout();
         leaderboardBar.setWidthFull();
         leaderboardBar.getStyle().set("background", "#1e293b").set("padding", "10px 16px").set("border-radius", "8px");
@@ -221,6 +228,15 @@ public class BoardView extends VerticalLayout {
                 int currentSlot = slot;
                 Pick existingPick = slotPickMap.get(currentSlot);
 
+                // NEW: Check if this specific game is locked
+                boolean gameLocked = false;
+                if (existingPick != null && existingPick.getGameId() != null) {
+                    com.pickem.app.model.Game game = gamesMap.get(existingPick.getGameId());
+                    if (game != null && game.getCommenceTime() != null) {
+                        gameLocked = game.getCommenceTime().isBefore(liveCutoff);
+                    }
+                }
+
                 Button slotButton = new Button();
                 slotButton.setWidthFull();
                 slotButton.setHeight("50px");
@@ -287,7 +303,8 @@ public class BoardView extends VerticalLayout {
                     com.vaadin.flow.component.html.Div bottomRow = new com.vaadin.flow.component.html.Div();
                     bottomRow.addClassName("pick-card-bottom");
 
-                    Span lineBadge = new Span(lineBadgeText);
+                    // NEW: Append a padlock if this specific game has started
+                    Span lineBadge = new Span(lineBadgeText + (gameLocked ? " 🔒" : ""));
                     lineBadge.addClassName("pick-line-badge");
                     bottomRow.add(lineBadge);
 
@@ -306,9 +323,11 @@ public class BoardView extends VerticalLayout {
                     }
                 }
 
-                if (weekLocked) {
-                    slotButton.getStyle().set("cursor", "default");
-                    if (existingPick == null) {
+                // NEW: Combine global week lock OR individual game lock
+                if (weekLocked || gameLocked) {
+                    slotButton.getStyle().set("cursor", "default"); // No pointer finger
+
+                    if (weekLocked && existingPick == null) {
                         slotButton.setText("🔒 Locked");
                         slotButton.getStyle()
                                 .set("color", "#475569")
