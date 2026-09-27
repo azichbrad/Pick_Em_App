@@ -3,10 +3,12 @@ package com.pickem.app.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.pickem.app.dto.GameOddsDTO;
 import com.pickem.app.model.Game;
+import com.pickem.app.model.OddsHistory; // NEW
 import com.pickem.app.model.Pick;
 import com.pickem.app.model.Player;
 import com.pickem.app.model.PlayerRecord;
 import com.pickem.app.repository.GameRepository;
+import com.pickem.app.repository.OddsHistoryRepository; // NEW
 import com.pickem.app.repository.PickRepository;
 import com.pickem.app.repository.PlayerRecordRepository;
 import com.pickem.app.repository.PlayerRepository;
@@ -63,16 +65,19 @@ public class GameSyncService {
     );
     private final PickRepository pickRepo;
     private final PlayerRecordRepository playerRecordRepo;
+    private final OddsHistoryRepository oddsHistoryRepo; // NEW
 
     @Value("${cfbd.api.key}")
     private String cfbdApiKey;
 
-    public GameSyncService(PickRepository pickRepo, GameRepository gameRepo, OddsService oddsService, PlayerRepository playerRepo, PlayerRecordRepository playerRecordRepo) {
+    // NEW: Added OddsHistoryRepository to the constructor
+    public GameSyncService(PickRepository pickRepo, GameRepository gameRepo, OddsService oddsService, PlayerRepository playerRepo, PlayerRecordRepository playerRecordRepo, OddsHistoryRepository oddsHistoryRepo) {
         this.gameRepo = gameRepo;
         this.oddsService = oddsService;
         this.pickRepo = pickRepo;
         this.playerRepo = playerRepo;
         this.playerRecordRepo = playerRecordRepo;
+        this.oddsHistoryRepo = oddsHistoryRepo;
     }
 
     @Scheduled(fixedRate = 1800000)
@@ -97,7 +102,6 @@ public class GameSyncService {
         System.out.println("🎯 Found " + picks.size() + " picks matching Week " + weekNumber + " and Sport " + sport);
 
         for (Pick pick : picks) {
-            // Guard: skip if the pick doesn't have an associated gameId or ID
             if (pick.getGameId() == null || pick.getId() == null) {
                 continue;
             }
@@ -129,13 +133,11 @@ public class GameSyncService {
             pick.setStatus(status);
         }
 
-        // 1. Save the graded picks
         List<Pick> validPicksToSave = picks.stream()
                 .filter(p -> p.getId() != null)
                 .toList();
         pickRepo.saveAll(validPicksToSave);
 
-        // 2. CALCULATE RECORDS PER SPORT (Weekly & Overall)
         Map<Player, List<Pick>> picksByPlayer = validPicksToSave.stream()
                 .collect(Collectors.groupingBy(Pick::getPlayer));
 
@@ -147,7 +149,6 @@ public class GameSyncService {
             int weeklyLosses = (int) playerPicks.stream().filter(p -> "LOSS".equals(p.getStatus())).count();
             int weeklyPushes = (int) playerPicks.stream().filter(p -> "PUSH".equals(p.getStatus())).count();
 
-            // Save or update Weekly Record
             PlayerRecord weeklyRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, weekNumber)
                     .orElse(new PlayerRecord(player, sport, weekNumber));
             weeklyRecord.setWins(weeklyWins);
@@ -155,7 +156,6 @@ public class GameSyncService {
             weeklyRecord.setPushes(weeklyPushes);
             playerRecordRepo.save(weeklyRecord);
 
-            // Calculate & Save Overall Season Record (Week 0 represents Overall for that Sport)
             List<Pick> allSportPicks = pickRepo.findByPlayerIdAndSport(player.getId(), sport);
             int overallWins = (int) allSportPicks.stream().filter(p -> "WIN".equals(p.getStatus())).count();
             int overallLosses = (int) allSportPicks.stream().filter(p -> "LOSS".equals(p.getStatus())).count();
@@ -173,7 +173,6 @@ public class GameSyncService {
     public void syncAllOdds() {
         System.out.println("Starting background odds sync...");
 
-        // 1. Check if cache is empty. If it is, fetch from CFBD!
         if (logoCache.isEmpty()) {
             fetchAndCacheLogos();
         }
@@ -187,10 +186,7 @@ public class GameSyncService {
         try {
             RestTemplate restTemplate = new RestTemplate();
             HttpHeaders headers = new HttpHeaders();
-
-            // This safely formats the "Bearer " string for you
             headers.setBearerAuth(cfbdApiKey);
-
             HttpEntity<String> entity = new HttpEntity<>(headers);
             String cfbdUrl = "https://api.collegefootballdata.com/teams";
 
@@ -213,7 +209,6 @@ public class GameSyncService {
     private void syncSport(List<GameOddsDTO> apiOddsList, String sport) {
         if (apiOddsList == null || apiOddsList.isEmpty()) return;
 
-        // 1. Group the flat SharpAPI rows by event_id so all odds for one game are bundled together
         Map<String, List<GameOddsDTO>> oddsByGame = apiOddsList.stream()
                 .filter(dto -> dto.eventId() != null)
                 .collect(Collectors.groupingBy(GameOddsDTO::eventId));
@@ -223,12 +218,12 @@ public class GameSyncService {
                 .collect(Collectors.toMap(Game::getId, g -> g));
 
         Map<String, Game> gamesToSaveMap = new HashMap<>();
+        List<OddsHistory> historyToSaveList = new ArrayList<>(); // NEW: Batch list for history
 
         for (Map.Entry<String, List<GameOddsDTO>> entry : oddsByGame.entrySet()) {
             String eventId = entry.getKey();
             List<GameOddsDTO> gameOdds = entry.getValue();
 
-            // Grab the first row to get the base game info (teams, time)
             GameOddsDTO baseInfo = gameOdds.get(0);
 
             Game game = existingGamesMap.getOrDefault(eventId,
@@ -246,23 +241,15 @@ public class GameSyncService {
             game.setAwayLogo(getLogoUrl(baseInfo.awayTeam()));
             game.setCommenceTime(baseInfo.eventStartTime());
 
-            // 2. Loop through the grouped rows to extract the actual point spreads and totals
-            // 2. Loop through the grouped rows to extract the actual point spreads and totals
             for (GameOddsDTO odd : gameOdds) {
-
-                // Match SharpAPI's exact market name: "point_spread"
                 if ("point_spread".equalsIgnoreCase(odd.marketType()) && odd.line() != null) {
-
                     if (odd.selection().equals(game.getAwayTeam())) {
                         game.setAwaySpread(odd.line());
                     } else if (odd.selection().equals(game.getHomeTeam())) {
                         game.setHomeSpread(odd.line());
                     }
                 }
-
-                // Match SharpAPI's exact market name: "total_points"
                 else if ("total_points".equalsIgnoreCase(odd.marketType()) && odd.line() != null) {
-
                     if ("Over".equalsIgnoreCase(odd.selection())) {
                         game.setOverTotal(odd.line());
                     } else if ("Under".equalsIgnoreCase(odd.selection())) {
@@ -272,33 +259,39 @@ public class GameSyncService {
             }
 
             gamesToSaveMap.put(game.getId(), game);
+
+            // NEW: Create and populate the historical row after the game updates are compiled
+            OddsHistory newOdds = new OddsHistory();
+            newOdds.setGameId(game.getId());
+            newOdds.setHomeSpread(game.getHomeSpread());
+            newOdds.setAwaySpread(game.getAwaySpread());
+            newOdds.setTotal(game.getOverTotal()); // Storing a single total since Over/Under are symmetrical
+
+            historyToSaveList.add(newOdds);
         }
 
+        // Save both tables in efficient bulk batches
         gameRepo.saveAll(gamesToSaveMap.values());
+        oddsHistoryRepo.saveAll(historyToSaveList); // NEW: Save history to the vault
     }
 
     public void buildLogoCache(JsonNode cfbdTeamsArray) {
         for (JsonNode team : cfbdTeamsArray) {
-            // Ensure the team actually has a logo in the array
             if (team.has("logos") && team.get("logos").size() > 0) {
                 String logoUrl = team.get("logos").get(0).asText();
                 String schoolName = team.get("school").asText().toLowerCase();
 
-                // Safely get the mascot if it exists
                 String mascot = "";
                 if (team.has("mascot") && !team.get("mascot").isNull()) {
                     mascot = team.get("mascot").asText().toLowerCase();
                 }
 
-                // 1. Map the official school name ("massachusetts")
                 logoCache.put(schoolName, logoUrl);
 
-                // 2. Map School + Mascot ("massachusetts minutemen")
                 if (!mascot.isEmpty()) {
                     logoCache.put(schoolName + " " + mascot, logoUrl);
                 }
 
-                // 3. Map Alternate Names & Alternate + Mascot ("umass", "umass minutemen")
                 if (team.has("alternateNames")) {
                     for (JsonNode altNode : team.get("alternateNames")) {
                         String altName = altNode.asText().toLowerCase();
@@ -318,15 +311,11 @@ public class GameSyncService {
 
         String cleanName = oddsApiTeamName.trim().toLowerCase();
 
-        // 1. Check NFL First
         if (NFL_ABBREVIATIONS.containsKey(cleanName)) {
             return "https://a.espncdn.com/i/teamlogos/nfl/500/" + NFL_ABBREVIATIONS.get(cleanName) + ".png";
         }
 
-        // 2. Check College Overrides
         cleanName = MANUAL_OVERRIDES.getOrDefault(cleanName, cleanName);
-
-        // 3. Check College Cache
         String url = logoCache.get(cleanName);
 
         if (url == null) {
@@ -339,7 +328,6 @@ public class GameSyncService {
     private String getNflLogo(String teamName) {
         Map<String, String> nflLogos = new HashMap<>();
 
-        // Removed Markdown formatting from all ESPN URLs
         nflLogos.put("Pittsburgh Steelers", "https://a.espncdn.com/i/teamlogos/nfl/500/pit.png");
         nflLogos.put("Kansas City Chiefs", "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png");
         nflLogos.put("San Francisco 49ers", "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png");
@@ -353,8 +341,6 @@ public class GameSyncService {
     public java.util.List<com.pickem.app.model.Game> getGamesForSportAndWeekFromDb(String sport, int weekNumber) {
         java.util.List<com.pickem.app.model.Game> allGames = gameRepo.findAll();
 
-        // NFL Starts Tuesday (Sept 8) -> Ends Monday
-        // NCAAF Starts Sunday (Aug 30) -> Ends Saturday
         java.time.ZonedDateTime week1Start = "NFL".equalsIgnoreCase(sport)
                 ? java.time.ZonedDateTime.of(2026, 9, 8, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"))
                 : java.time.ZonedDateTime.of(2026, 8, 30, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
@@ -367,7 +353,6 @@ public class GameSyncService {
                 .filter(g -> g.getCommenceTime() != null &&
                         !g.getCommenceTime().isBefore(windowStart) &&
                         g.getCommenceTime().isBefore(windowEnd))
-                // FIXED: Sort chronologically by kickoff time
                 .sorted(java.util.Comparator.comparing(com.pickem.app.model.Game::getCommenceTime))
                 .toList();
     }
