@@ -11,6 +11,7 @@ import com.pickem.app.repository.PlayerRecordRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import jakarta.annotation.PostConstruct;
 
 import java.util.List;
 
@@ -27,6 +28,12 @@ public class ScoreAndGradingService {
         this.gameRepository = gameRepository;
         this.pickRepository = pickRepository;
         this.playerRecordRepo = playerRecordRepo;
+    }
+
+    @PostConstruct
+    public void forceRunOnStartup() {
+        System.out.println("Waking up! Running an immediate score sync...");
+        syncScoresAndGrade();
     }
 
     // UPDATED: Runs at the top of every hour to stay fresh without hitting rate limits
