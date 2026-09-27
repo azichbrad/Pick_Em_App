@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import jakarta.annotation.PostConstruct;
 
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class ScoreAndGradingService {
@@ -22,6 +23,15 @@ public class ScoreAndGradingService {
     private final GameRepository gameRepository;
     private final PickRepository pickRepository;
     private final PlayerRecordRepository playerRecordRepo;
+
+    // Bridge common naming variations between SharpAPI and score APIs (CFBD / Highlightly)
+    private static final Map<String, String> TEAM_ALIASES = Map.of(
+            "miami fl", "miami",
+            "southern california", "usc",
+            "ole miss", "mississippi",
+            "lsu", "louisiana state",
+            "pitt", "pittsburgh"
+    );
 
     public ScoreAndGradingService(OddsService oddsService, GameRepository gameRepository, PickRepository pickRepository, PlayerRecordRepository playerRecordRepo) {
         this.oddsService = oddsService;
@@ -36,13 +46,12 @@ public class ScoreAndGradingService {
         syncScoresAndGrade();
     }
 
-    // UPDATED: Runs at the top of every hour to stay fresh without hitting rate limits
     @Scheduled(cron = "0 0 * * * *")
     public void syncScoresAndGrade() {
         System.out.println("Starting score sync and grading engine...");
 
-        List<ScoreDTO> ncaafScores = oddsService.getCompletedScores("americanfootball_ncaaf");
-        List<ScoreDTO> nflScores = oddsService.getCompletedScores("americanfootball_nfl");
+        List<ScoreDTO> ncaafScores = oddsService.getCompletedScores("americanfootball_ncaaf", 3);
+        List<ScoreDTO> nflScores = oddsService.getCompletedScores("americanfootball_nfl", 3);
 
         processScores(ncaafScores);
         processScores(nflScores);
@@ -51,29 +60,31 @@ public class ScoreAndGradingService {
     }
 
     private void processScores(List<ScoreDTO> apiScores) {
-        if (apiScores == null || apiScores.isEmpty()) return;
+        if (apiScores == null || apiScores.isEmpty()) {
+            System.out.println("⚠️ WARNING: processScores received ZERO scores from OddsService!");
+            return;
+        }
 
+        System.out.println("🔍 Processing " + apiScores.size() + " incoming API scores...");
         List<Game> pendingGames = gameRepository.findByCompletedFalse();
 
         for (ScoreDTO apiScore : apiScores) {
-            // Only process games that are fully completed and possess at least 2 scores
-            if (Boolean.TRUE.equals(apiScore.completed()) && apiScore.scores() != null && apiScore.scores().size() >= 2) {
+            System.out.println("-> Checking API Game: " + apiScore.homeTeam() + " vs " + apiScore.awayTeam() + " [Completed: " + apiScore.completed() + "]");
 
+            if (Boolean.TRUE.equals(apiScore.completed()) && apiScore.scores() != null && apiScore.scores().size() >= 2) {
                 for (Game dbGame : pendingGames) {
-                    // FIX 1: Check if both teams match, regardless of who the API says is "Home" or "Away"
                     boolean homeInApi = isTeamMatch(dbGame.getHomeTeam(), apiScore.homeTeam()) || isTeamMatch(dbGame.getHomeTeam(), apiScore.awayTeam());
                     boolean awayInApi = isTeamMatch(dbGame.getAwayTeam(), apiScore.homeTeam()) || isTeamMatch(dbGame.getAwayTeam(), apiScore.awayTeam());
 
                     if (homeInApi && awayInApi) {
+                        System.out.println(" MATCH FOUND IN DB FOR: " + dbGame.getHomeTeam() + " vs " + dbGame.getAwayTeam());
                         Integer dbHomeScore = null;
                         Integer dbAwayScore = null;
 
-                        // FIX 2: Map the API scores directly to the DB teams to avoid swapped Home/Away bugs
                         for (ScoreDTO.TeamScoreDTO ts : apiScore.scores()) {
                             try {
-                                // FIX 3: Parse as double first to prevent NumberFormatExceptions if the API sends "34.0"
-                                int parsedScore = (int) Double.parseDouble(ts.score()); 
-                                
+                                int parsedScore = (int) Double.parseDouble(ts.score());
+
                                 if (isTeamMatch(ts.name(), dbGame.getHomeTeam())) {
                                     dbHomeScore = parsedScore;
                                 } else if (isTeamMatch(ts.name(), dbGame.getAwayTeam())) {
@@ -88,7 +99,8 @@ public class ScoreAndGradingService {
                             dbGame.setCompleted(true);
                             gameRepository.save(dbGame);
 
-                            // Trigger the grading math!
+                            System.out.println("✅ Successfully graded & updated game: " + dbGame.getAwayTeam() + " (" + dbAwayScore + ") @ " + dbGame.getHomeTeam() + " (" + dbHomeScore + ")");
+
                             gradePicksForGame(dbGame);
                         }
                     }
@@ -107,7 +119,6 @@ public class ScoreAndGradingService {
             if ("spread".equalsIgnoreCase(pick.getMarketType())) {
                 double spread = pick.getLockedPoint();
 
-                // FIX 4: Added .trim().equalsIgnoreCase() to prevent spacing mismatch issues
                 if (pick.getSelectionSide().trim().equalsIgnoreCase(game.getHomeTeam().trim())) {
                     double adjustedHome = game.getHomeScore() + spread;
                     if (adjustedHome > game.getAwayScore()) newStatus = "WIN";
@@ -138,7 +149,6 @@ public class ScoreAndGradingService {
             pick.setStatus(newStatus);
             pickRepository.save(pick);
 
-            // Track the player and week to recalculate records
             if (pick.getPlayer() != null && pick.getWeekNumber() != null) {
                 updatePlayerRecords(pick.getPlayer(), game.getSport(), pick.getWeekNumber());
             }
@@ -182,9 +192,16 @@ public class ScoreAndGradingService {
         playerRecordRepo.save(overallRecord);
     }
 
-    private boolean isTeamMatch(String dbTeam, String apiTeam) {
-        if (dbTeam == null || apiTeam == null) return false;
-        return dbTeam.toLowerCase().contains(apiTeam.toLowerCase()) ||
-                apiTeam.toLowerCase().contains(dbTeam.toLowerCase());
+    private boolean isTeamMatch(String team1, String team2) {
+        if (team1 == null || team2 == null) return false;
+
+        String t1 = team1.trim().toLowerCase();
+        String t2 = team2.trim().toLowerCase();
+
+        // Apply alias translation if present
+        t1 = TEAM_ALIASES.getOrDefault(t1, t1);
+        t2 = TEAM_ALIASES.getOrDefault(t2, t2);
+
+        return t1.contains(t2) || t2.contains(t1);
     }
 }

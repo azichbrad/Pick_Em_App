@@ -34,21 +34,19 @@ public class BoardView extends VerticalLayout {
     private final PickRepository pickRepo;
     private final OddsService oddsService;
     private final ConferenceService conferenceService;
-    private final GradingService gradingService;
     private final GameSyncService gameSyncService;
     private final PlayerRecordRepository playerRecordRepo;
     private final PickRepository pickRepository;
     private final PickService pickService;
 
     public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService,
-                     ConferenceService conferenceService, GradingService gradingService,
+                     ConferenceService conferenceService,
                      GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo, PlayerRecordRepository playerRecordRepo1,
                      PickRepository pickRepository, PickService pickService) {
         this.playerRepo = playerRepo;
         this.pickRepo = pickRepo;
         this.oddsService = oddsService;
         this.conferenceService = conferenceService;
-        this.gradingService = gradingService;
         this.gameSyncService = gameSyncService;
         this.playerRecordRepo = playerRecordRepo1;
         this.pickRepository = pickRepository;

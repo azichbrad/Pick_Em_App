@@ -10,18 +10,19 @@ import com.pickem.app.dto.GameOddsDTO;
 import com.pickem.app.dto.ScoreDTO;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
-import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -30,31 +31,34 @@ public class OddsService {
     @Value("${SHARP_API_KEY}")
     private String sharpApiKey;
 
-    @Value("${odds.api.key}")
+    @Value("${cfbd.api.key:}")
+    private String cfbdApiKey;
+
+    @Value("${HIGHLIGHTLY_API_KEY:}")
+    private String highlightlyApiKey;
+
+    @Value("${odds.api.key:}")
     private String oldApiKey;
 
-    @Value("${odds.api.base-url}")
+    @Value("${odds.api.base-url:}")
     private String baseUrl;
 
     private final RestTemplate restTemplate = new RestTemplate();
 
-    // FIXED: Actually register the JavaTimeModule to prevent the Jackson crash
     private final ObjectMapper objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     @Cacheable("ncaafOdds")
     public List<GameOddsDTO> getCollegeFootballOdds() {
-        // FIXED: Using exact market_type names to filter out 1st-half/quarter noise
-        String baseUrl = "https://api.sharpapi.io/api/v1/events?sport=football&league=NCAAF&sportsbook=fanduel&limit=200&market_types=point_spread,total_points&days_from_now=7";
-        return parseSharpApiResponse(fetchAllSharpApiOdds(baseUrl));
+        String url = "https://api.sharpapi.io/api/v1/events?sport=football&league=NCAAF&sportsbook=fanduel&limit=200";
+        return parseSharpApiResponse(fetchAllSharpApiOdds(url));
     }
 
     @Cacheable("nflOdds")
     public List<GameOddsDTO> getNflOdds() {
-        // FIXED: Using exact market_type names to filter out 1st-half/quarter noise
-        String baseUrl = "https://api.sharpapi.io/api/v1/events?sport=football&league=NFL&sportsbook=fanduel&limit=200&market_types=point_spread,total_points&days_from_now=7";
-        return parseSharpApiResponse(fetchAllSharpApiOdds(baseUrl));
+        String url = "https://api.sharpapi.io/api/v1/events?sport=football&league=NFL&sportsbook=fanduel&limit=200";
+        return parseSharpApiResponse(fetchAllSharpApiOdds(url));
     }
 
     private String fetchAllSharpApiOdds(String apiUrl) {
@@ -64,6 +68,7 @@ public class OddsService {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(sharpApiKey);
+        headers.set("Accept", "application/json");
         HttpEntity<String> entity = new HttpEntity<>(headers);
 
         while (hasMore) {
@@ -82,13 +87,11 @@ public class OddsService {
                 JsonNode pagination = root.path("pagination");
                 if (pagination.has("has_more") && pagination.get("has_more").asBoolean()) {
                     offset = pagination.get("next_offset").asInt();
-
                     try {
                         Thread.sleep(5000);
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                     }
-
                 } else {
                     hasMore = false;
                 }
@@ -103,20 +106,126 @@ public class OddsService {
         return combinedRoot.toString();
     }
 
-    public List<ScoreDTO> getCompletedScores(String sportKey) {
-        String url = UriComponentsBuilder.fromHttpUrl(baseUrl + "/sports/" + sportKey + "/scores/")
-                .queryParam("apiKey", oldApiKey)
-                .queryParam("daysFrom", 3)
-                .toUriString();
+    public List<ScoreDTO> getCompletedScores(String sport) {
+        return getCompletedScores(sport, 3);
+    }
+
+    public List<ScoreDTO> getCompletedScores(String sport, int daysBack) {
+        if (sport.toLowerCase().contains("ncaaf") && cfbdApiKey != null && !cfbdApiKey.isEmpty()) {
+            return getCfbdScores(sport, daysBack);
+        }
+
+        if (sport.toLowerCase().contains("nfl") && highlightlyApiKey != null && !highlightlyApiKey.isEmpty()) {
+            return getHighlightlyNflScores(sport, daysBack);
+        }
+
+        return new ArrayList<>();
+    }
+
+    private List<ScoreDTO> getHighlightlyNflScores(String sport, int daysBack) {
+        List<ScoreDTO> finalScores = new ArrayList<>();
+        LocalDate today = LocalDate.now(ZoneId.of("America/Los_Angeles"));
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+        for (int i = 0; i <= daysBack; i++) {
+            String dateStr = today.minusDays(i).format(formatter);
+            String url = "https://sports.highlightly.net/american-football/matches?date=" + dateStr;
+
+            try {
+                HttpHeaders headers = new HttpHeaders();
+                headers.set("x-rapidapi-key", highlightlyApiKey);
+                headers.set("Accept", "application/json");
+                HttpEntity<String> entity = new HttpEntity<>(headers);
+
+                ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, entity, JsonNode.class);
+                JsonNode root = response.getBody();
+
+                System.out.println("🔍 Highlightly Response for " + dateStr + ": " + (root != null ? root.toString().substring(0, Math.min(root.toString().length(), 200)) : "null"));
+
+                JsonNode matches = root != null && root.has("data") ? root.path("data") : root;
+
+                if (matches != null && matches.isArray()) {
+                    for (JsonNode match : matches) {
+                        boolean completed = match.path("completed").asBoolean(false);
+                        if (!completed) continue;
+
+                        String gameId = match.path("id").asText();
+                        String homeTeam = match.path("homeTeam").path("name").asText(match.path("home_team").asText());
+                        String awayTeam = match.path("awayTeam").path("name").asText(match.path("away_team").asText());
+                        String homeScore = match.path("homeScore").asText(match.path("home_points").asText());
+                        String awayScore = match.path("awayScore").asText(match.path("away_points").asText());
+
+                        List<ScoreDTO.TeamScoreDTO> teamScores = List.of(
+                                new ScoreDTO.TeamScoreDTO(homeTeam, homeScore),
+                                new ScoreDTO.TeamScoreDTO(awayTeam, awayScore)
+                        );
+
+                        boolean alreadyAdded = finalScores.stream().anyMatch(s -> s.id().equals(gameId));
+                        if (!alreadyAdded) {
+                            finalScores.add(new ScoreDTO(gameId, sport, true, homeTeam, awayTeam, teamScores));
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("❌ Highlightly error for " + dateStr + ": " + e.getMessage());
+            }
+        }
+
+        return finalScores;
+    }
+
+    private List<ScoreDTO> getCfbdScores(String sport, int daysBack) {
+        List<ScoreDTO> finalScores = new ArrayList<>();
+        LocalDate today = LocalDate.now(ZoneId.of("America/Los_Angeles"));
+        int currentYear = today.getYear();
+
+        // Query by specific current week / regular season to get clean, immediate results
+        String url = "https://api.collegefootballdata.com/games?year=" + currentYear + "&seasonType=regular";
 
         try {
-            ResponseEntity<List<ScoreDTO>> response = restTemplate.exchange(
-                    url, HttpMethod.GET, null, new ParameterizedTypeReference<List<ScoreDTO>>() {}
-            );
-            return response.getBody() != null ? response.getBody() : List.of();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(cfbdApiKey);
+            headers.set("Accept", "application/json");
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+
+            ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, entity, JsonNode.class);
+            JsonNode games = response.getBody();
+
+            if (games != null && games.isArray()) {
+                for (JsonNode game : games) {
+                    boolean completed = game.path("completed").asBoolean(false);
+                    if (!completed) continue;
+
+                    String startDateStr = game.path("start_date").asText();
+                    if (startDateStr != null && !startDateStr.isEmpty()) {
+                        Instant start = Instant.parse(startDateStr);
+                        LocalDate gameDate = start.atZone(ZoneId.of("America/Los_Angeles")).toLocalDate();
+
+                        // Check if the game occurred within our lookback window (e.g., last 7 days)
+                        if (gameDate.isBefore(today.minusDays(daysBack)) || gameDate.isAfter(today)) {
+                            continue;
+                        }
+                    }
+
+                    String gameId = game.path("id").asText();
+                    String homeTeam = game.path("home_team").asText();
+                    String awayTeam = game.path("away_team").asText();
+                    String homeScore = game.path("home_points").asText();
+                    String awayScore = game.path("away_points").asText();
+
+                    List<ScoreDTO.TeamScoreDTO> teamScores = List.of(
+                            new ScoreDTO.TeamScoreDTO(homeTeam, homeScore),
+                            new ScoreDTO.TeamScoreDTO(awayTeam, awayScore)
+                    );
+
+                    finalScores.add(new ScoreDTO(gameId, sport, true, homeTeam, awayTeam, teamScores));
+                }
+            }
         } catch (Exception e) {
-            return List.of();
+            System.err.println("❌ Failed to fetch CFBD NCAAF scores: " + e.getMessage());
         }
+
+        return finalScores;
     }
 
     public List<GameOddsDTO> getOddsForSportAndWeek(String sport, int weekNumber) {
@@ -125,7 +234,6 @@ public class OddsService {
             return List.of();
         }
 
-        // FIXED: NCAAF shifted to August 30 (Sunday) to capture Thursday-Saturday games
         ZonedDateTime week1Start = "NFL".equalsIgnoreCase(sport)
                 ? ZonedDateTime.of(2026, 9, 8, 0, 0, 0, 0, ZoneId.of("America/Los_Angeles"))
                 : ZonedDateTime.of(2026, 8, 30, 0, 0, 0, 0, ZoneId.of("America/Los_Angeles"));
@@ -150,9 +258,8 @@ public class OddsService {
 
     private List<GameOddsDTO> parseSharpApiResponse(String jsonBody) {
         try {
-            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(jsonBody);
-
-            com.fasterxml.jackson.databind.JsonNode dataNode = root.has("data") ? root.get("data") : root;
+            JsonNode root = objectMapper.readTree(jsonBody);
+            JsonNode dataNode = root.has("data") ? root.get("data") : root;
 
             return objectMapper.convertValue(
                     dataNode,

@@ -61,7 +61,8 @@ public class GameSyncService {
             "nicholls state colonels", "nicholls",
             "southeastern louisiana lions", "southeastern louisiana",
             "louisiana ragin cajuns", "louisiana",
-            "hawaii rainbow warriors", "hawai'i"
+            "hawaii rainbow warriors", "hawai'i",
+            "miami fl", "miami"
     );
     private final PickRepository pickRepo;
     private final PlayerRecordRepository playerRecordRepo;
@@ -237,8 +238,8 @@ public class GameSyncService {
             game.setSport(sport);
             game.setHomeTeam(baseInfo.homeTeam());
             game.setAwayTeam(baseInfo.awayTeam());
-            game.setHomeLogo(getLogoUrl(baseInfo.homeTeam()));
-            game.setAwayLogo(getLogoUrl(baseInfo.awayTeam()));
+            game.setHomeLogo(getLogoUrl(baseInfo.homeTeam(), sport));
+            game.setAwayLogo(getLogoUrl(baseInfo.awayTeam(), sport));
             game.setCommenceTime(baseInfo.eventStartTime());
 
             for (GameOddsDTO odd : gameOdds) {
@@ -306,20 +307,30 @@ public class GameSyncService {
         }
     }
 
-    public String getLogoUrl(String oddsApiTeamName) {
+    public String getLogoUrl(String oddsApiTeamName, String sport) {
         if (oddsApiTeamName == null) return null;
 
         String cleanName = oddsApiTeamName.trim().toLowerCase();
 
-        if (NFL_ABBREVIATIONS.containsKey(cleanName)) {
-            return "https://a.espncdn.com/i/teamlogos/nfl/500/" + NFL_ABBREVIATIONS.get(cleanName) + ".png";
+        // 1. Isolate NFL checks so they never overwrite College teams!
+        if ("NFL".equalsIgnoreCase(sport)) {
+            // Catch truncated names from SharpAPI
+            if (cleanName.equals("arizona") || cleanName.equals("az cardinals") || cleanName.equals("ari cardinals")) {
+                return "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png";
+            }
+
+            // Check the standard abbreviation map
+            if (NFL_ABBREVIATIONS.containsKey(cleanName)) {
+                return "https://a.espncdn.com/i/teamlogos/nfl/500/" + NFL_ABBREVIATIONS.get(cleanName) + ".png";
+            }
         }
 
+        // 2. Check College Overrides & Cache
         cleanName = MANUAL_OVERRIDES.getOrDefault(cleanName, cleanName);
         String url = logoCache.get(cleanName);
 
         if (url == null) {
-            System.out.println("❌ CACHE MISS: Odds API handed us -> '" + oddsApiTeamName + "'");
+            System.out.println("❌ CACHE MISS: Odds API handed us -> '" + oddsApiTeamName + "' for sport: " + sport);
         }
 
         return url;
