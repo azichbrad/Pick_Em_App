@@ -31,9 +31,6 @@ public class OddsService {
     @Value("${SHARP_API_KEY}")
     private String sharpApiKey;
 
-    @Value("${cfbd.api.key:}")
-    private String cfbdApiKey;
-
     @Value("${HIGHLIGHTLY_API_KEY:}")
     private String highlightlyApiKey;
 
@@ -63,16 +60,24 @@ public class OddsService {
 
     private String fetchAllSharpApiOdds(String apiUrl) {
         ArrayNode allData = objectMapper.createArrayNode();
+        String cursor = null;
         int offset = 0;
         boolean hasMore = true;
+        int pageCount = 0;
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(sharpApiKey);
         headers.set("Accept", "application/json");
         HttpEntity<String> entity = new HttpEntity<>(headers);
 
-        while (hasMore) {
-            String pagedUrl = apiUrl + "&offset=" + offset;
+        while (hasMore && pageCount < 20) { // Safety break limit
+            String pagedUrl = apiUrl;
+            if (cursor != null && !cursor.isEmpty()) {
+                pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "cursor=" + cursor;
+            } else if (offset > 0) {
+                pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "offset=" + offset;
+            }
+
             try {
                 ResponseEntity<String> response = restTemplate.exchange(pagedUrl, HttpMethod.GET, entity, String.class);
                 JsonNode root = objectMapper.readTree(response.getBody());
@@ -86,9 +91,18 @@ public class OddsService {
 
                 JsonNode pagination = root.path("pagination");
                 if (pagination.has("has_more") && pagination.get("has_more").asBoolean()) {
-                    offset = pagination.get("next_offset").asInt();
+                    // Check for cursor pagination first, fallback to offset if needed
+                    if (pagination.has("next_cursor") && !pagination.get("next_cursor").isNull()) {
+                        cursor = pagination.get("next_cursor").asText();
+                    } else if (pagination.has("next_offset")) {
+                        offset = pagination.get("next_offset").asInt();
+                    } else {
+                        hasMore = false;
+                    }
+
+                    pageCount++;
                     try {
-                        Thread.sleep(5000);
+                        Thread.sleep(5000); // 5-second throttle to respect rate limits
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                     }
@@ -96,7 +110,7 @@ public class OddsService {
                     hasMore = false;
                 }
             } catch (Exception e) {
-                System.err.println("API Error at offset " + offset + ": " + e.getMessage());
+                System.err.println("API Pagination Error: " + e.getMessage());
                 hasMore = false;
             }
         }
@@ -110,38 +124,29 @@ public class OddsService {
         return getCompletedScores(sport, 3);
     }
 
+    // Unified Highlightly 2-Step Score Fetcher for both NFL and NCAAF
     public List<ScoreDTO> getCompletedScores(String sport, int daysBack) {
-        if (sport.toLowerCase().contains("ncaaf") && cfbdApiKey != null && !cfbdApiKey.isEmpty()) {
-            return getCfbdScores(sport, daysBack);
-        }
-
-        if (sport.toLowerCase().contains("nfl") && highlightlyApiKey != null && !highlightlyApiKey.isEmpty()) {
-            return getHighlightlyNflScores(sport, daysBack);
-        }
-
-        return new ArrayList<>();
-    }
-
-    private List<ScoreDTO> getHighlightlyNflScores(String sport, int daysBack) {
         List<ScoreDTO> finalScores = new ArrayList<>();
+        if (highlightlyApiKey == null || highlightlyApiKey.isEmpty()) {
+            return finalScores;
+        }
+
         LocalDate today = LocalDate.now(ZoneId.of("America/Los_Angeles"));
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("x-rapidapi-key", highlightlyApiKey);
+        headers.set("Accept", "application/json");
+        HttpEntity<String> entity = new HttpEntity<>(headers);
+
+        // Step 1: Iterate through the date window and get the match list
         for (int i = 0; i <= daysBack; i++) {
             String dateStr = today.minusDays(i).format(formatter);
-            String url = "https://sports.highlightly.net/american-football/matches?date=" + dateStr;
+            String matchesUrl = "https://sports.highlightly.net/american-football/matches?date=" + dateStr;
 
             try {
-                HttpHeaders headers = new HttpHeaders();
-                headers.set("x-rapidapi-key", highlightlyApiKey);
-                headers.set("Accept", "application/json");
-                HttpEntity<String> entity = new HttpEntity<>(headers);
-
-                ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, entity, JsonNode.class);
+                ResponseEntity<JsonNode> response = restTemplate.exchange(matchesUrl, HttpMethod.GET, entity, JsonNode.class);
                 JsonNode root = response.getBody();
-
-                System.out.println("🔍 Highlightly Response for " + dateStr + ": " + (root != null ? root.toString().substring(0, Math.min(root.toString().length(), 200)) : "null"));
-
                 JsonNode matches = root != null && root.has("data") ? root.path("data") : root;
 
                 if (matches != null && matches.isArray()) {
@@ -149,83 +154,62 @@ public class OddsService {
                         boolean completed = match.path("completed").asBoolean(false);
                         if (!completed) continue;
 
-                        String gameId = match.path("id").asText();
-                        String homeTeam = match.path("homeTeam").path("name").asText(match.path("home_team").asText());
-                        String awayTeam = match.path("awayTeam").path("name").asText(match.path("away_team").asText());
-                        String homeScore = match.path("homeScore").asText(match.path("home_points").asText());
-                        String awayScore = match.path("awayScore").asText(match.path("away_points").asText());
+                        // Filter correctly by sport/league type
+                        String league = match.path("league").path("name").asText(match.path("league").asText()).toLowerCase();
+                        boolean isNcaaf = sport.toLowerCase().contains("ncaaf");
 
-                        List<ScoreDTO.TeamScoreDTO> teamScores = List.of(
-                                new ScoreDTO.TeamScoreDTO(homeTeam, homeScore),
-                                new ScoreDTO.TeamScoreDTO(awayTeam, awayScore)
-                        );
+                        if (isNcaaf && !league.contains("ncaa") && !league.contains("fbs") && !league.contains("college")) {
+                            continue;
+                        }
+                        if (!isNcaaf && !league.contains("nfl")) {
+                            continue;
+                        }
 
-                        boolean alreadyAdded = finalScores.stream().anyMatch(s -> s.id().equals(gameId));
-                        if (!alreadyAdded) {
-                            finalScores.add(new ScoreDTO(gameId, sport, true, homeTeam, awayTeam, teamScores));
+                        String matchId = match.path("id").asText();
+
+                        // Step 2: Use the match ID to fetch the detailed box score
+                        ScoreDTO detailedScore = fetchHighlightlyBoxScore(matchId, sport, headers);
+                        if (detailedScore != null) {
+                            boolean alreadyAdded = finalScores.stream().anyMatch(s -> s.id().equals(matchId));
+                            if (!alreadyAdded) {
+                                finalScores.add(detailedScore);
+                            }
                         }
                     }
                 }
             } catch (Exception e) {
-                System.err.println("❌ Highlightly error for " + dateStr + ": " + e.getMessage());
+                System.err.println("❌ Failed to fetch Highlightly matches for " + dateStr + ": " + e.getMessage());
             }
         }
 
         return finalScores;
     }
 
-    private List<ScoreDTO> getCfbdScores(String sport, int daysBack) {
-        List<ScoreDTO> finalScores = new ArrayList<>();
-        LocalDate today = LocalDate.now(ZoneId.of("America/Los_Angeles"));
-        int currentYear = today.getYear();
-
-        // Query by specific current week / regular season to get clean, immediate results
-        String url = "https://api.collegefootballdata.com/games?year=" + currentYear + "&seasonType=regular";
+    private ScoreDTO fetchHighlightlyBoxScore(String matchId, String sport, HttpHeaders headers) {
+        String boxScoreUrl = "https://sports.highlightly.net/american-football/matches/" + matchId + "/boxscore";
 
         try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(cfbdApiKey);
-            headers.set("Accept", "application/json");
             HttpEntity<String> entity = new HttpEntity<>(headers);
+            ResponseEntity<JsonNode> response = restTemplate.exchange(boxScoreUrl, HttpMethod.GET, entity, JsonNode.class);
+            JsonNode boxRoot = response.getBody();
 
-            ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, entity, JsonNode.class);
-            JsonNode games = response.getBody();
+            if (boxRoot != null) {
+                String homeTeam = boxRoot.path("homeTeam").path("name").asText(boxRoot.path("home_team").asText());
+                String awayTeam = boxRoot.path("awayTeam").path("name").asText(boxRoot.path("away_team").asText());
+                String homeScore = boxRoot.path("homeScore").asText(boxRoot.path("home_points").asText());
+                String awayScore = boxRoot.path("awayScore").asText(boxRoot.path("away_points").asText());
 
-            if (games != null && games.isArray()) {
-                for (JsonNode game : games) {
-                    boolean completed = game.path("completed").asBoolean(false);
-                    if (!completed) continue;
+                List<ScoreDTO.TeamScoreDTO> teamScores = List.of(
+                        new ScoreDTO.TeamScoreDTO(homeTeam, homeScore),
+                        new ScoreDTO.TeamScoreDTO(awayTeam, awayScore)
+                );
 
-                    String startDateStr = game.path("start_date").asText();
-                    if (startDateStr != null && !startDateStr.isEmpty()) {
-                        Instant start = Instant.parse(startDateStr);
-                        LocalDate gameDate = start.atZone(ZoneId.of("America/Los_Angeles")).toLocalDate();
-
-                        // Check if the game occurred within our lookback window (e.g., last 7 days)
-                        if (gameDate.isBefore(today.minusDays(daysBack)) || gameDate.isAfter(today)) {
-                            continue;
-                        }
-                    }
-
-                    String gameId = game.path("id").asText();
-                    String homeTeam = game.path("home_team").asText();
-                    String awayTeam = game.path("away_team").asText();
-                    String homeScore = game.path("home_points").asText();
-                    String awayScore = game.path("away_points").asText();
-
-                    List<ScoreDTO.TeamScoreDTO> teamScores = List.of(
-                            new ScoreDTO.TeamScoreDTO(homeTeam, homeScore),
-                            new ScoreDTO.TeamScoreDTO(awayTeam, awayScore)
-                    );
-
-                    finalScores.add(new ScoreDTO(gameId, sport, true, homeTeam, awayTeam, teamScores));
-                }
+                return new ScoreDTO(matchId, sport, true, homeTeam, awayTeam, teamScores);
             }
         } catch (Exception e) {
-            System.err.println("❌ Failed to fetch CFBD NCAAF scores: " + e.getMessage());
+            System.err.println("❌ Failed to fetch box score for match ID " + matchId + ": " + e.getMessage());
         }
-
-        return finalScores;
+        return null;
     }
 
     public List<GameOddsDTO> getOddsForSportAndWeek(String sport, int weekNumber) {

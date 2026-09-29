@@ -336,6 +336,27 @@ public class GameSyncService {
         return url;
     }
 
+    // Normalize team names for logo resolution to prevent broken image links
+    private String normalizeTeamForLogo(String sport, String rawTeamName) {
+        if (rawTeamName == null) return "";
+        String team = rawTeamName.trim().toLowerCase();
+
+        // NFL Logo Overrides (handles truncated SharpAPI names like "Arizona" or "ARI Cardinals")
+        if (sport != null && sport.toLowerCase().contains("nfl")) {
+            if (team.contains("arizona") || team.contains("cardinals") || team.equals("ari")) {
+                return "Arizona Cardinals";
+            }
+        }
+        // College Football Logo Overrides (handles "Miami FL" vs "Miami")
+        else {
+            if (team.contains("miami") && !team.contains("ohio")) {
+                return "Miami";
+            }
+        }
+
+        return rawTeamName;
+    }
+
     private String getNflLogo(String teamName) {
         Map<String, String> nflLogos = new HashMap<>();
 
