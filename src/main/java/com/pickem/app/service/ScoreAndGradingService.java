@@ -14,7 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 import jakarta.annotation.PostConstruct;
 
 import java.util.List;
-import java.util.Map;
 
 @Service
 public class ScoreAndGradingService {
@@ -23,15 +22,6 @@ public class ScoreAndGradingService {
     private final GameRepository gameRepository;
     private final PickRepository pickRepository;
     private final PlayerRecordRepository playerRecordRepo;
-
-    // Bridge common naming variations between SharpAPI and score APIs (CFBD / Highlightly)
-    private static final Map<String, String> TEAM_ALIASES = Map.of(
-            "miami fl", "miami",
-            "southern california", "usc",
-            "ole miss", "mississippi",
-            "lsu", "louisiana state",
-            "pitt", "pittsburgh"
-    );
 
     public ScoreAndGradingService(OddsService oddsService, GameRepository gameRepository, PickRepository pickRepository, PlayerRecordRepository playerRecordRepo) {
         this.oddsService = oddsService;
@@ -50,8 +40,9 @@ public class ScoreAndGradingService {
     public void syncScoresAndGrade() {
         System.out.println("Starting score sync and grading engine...");
 
-        List<ScoreDTO> ncaafScores = oddsService.getCompletedScores("americanfootball_ncaaf", 3);
-        List<ScoreDTO> nflScores = oddsService.getCompletedScores("americanfootball_nfl", 3);
+        // Look back 10 days so all completed games from the previous week are caught
+        List<ScoreDTO> ncaafScores = oddsService.getCompletedScores("americanfootball_ncaaf", 10);
+        List<ScoreDTO> nflScores = oddsService.getCompletedScores("americanfootball_nfl", 10);
 
         processScores(ncaafScores);
         processScores(nflScores);
@@ -69,15 +60,17 @@ public class ScoreAndGradingService {
         List<Game> pendingGames = gameRepository.findByCompletedFalse();
 
         for (ScoreDTO apiScore : apiScores) {
-            System.out.println("-> Checking API Game: " + apiScore.homeTeam() + " vs " + apiScore.awayTeam() + " [Completed: " + apiScore.completed() + "]");
-
             if (Boolean.TRUE.equals(apiScore.completed()) && apiScore.scores() != null && apiScore.scores().size() >= 2) {
                 for (Game dbGame : pendingGames) {
-                    boolean homeInApi = isTeamMatch(dbGame.getHomeTeam(), apiScore.homeTeam()) || isTeamMatch(dbGame.getHomeTeam(), apiScore.awayTeam());
-                    boolean awayInApi = isTeamMatch(dbGame.getAwayTeam(), apiScore.homeTeam()) || isTeamMatch(dbGame.getAwayTeam(), apiScore.awayTeam());
+                    // Check if both teams match (accounting for neutral-site swaps)
+                    boolean directMatch = isTeamMatch(dbGame.getHomeTeam(), apiScore.homeTeam()) &&
+                            isTeamMatch(dbGame.getAwayTeam(), apiScore.awayTeam());
 
-                    if (homeInApi && awayInApi) {
-                        System.out.println(" MATCH FOUND IN DB FOR: " + dbGame.getHomeTeam() + " vs " + dbGame.getAwayTeam());
+                    boolean swappedMatch = isTeamMatch(dbGame.getHomeTeam(), apiScore.awayTeam()) &&
+                            isTeamMatch(dbGame.getAwayTeam(), apiScore.homeTeam());
+
+                    if (directMatch || swappedMatch) {
+                        System.out.println("🎯 MATCH FOUND IN DB FOR: " + dbGame.getAwayTeam() + " @ " + dbGame.getHomeTeam());
                         Integer dbHomeScore = null;
                         Integer dbAwayScore = null;
 
@@ -85,9 +78,9 @@ public class ScoreAndGradingService {
                             try {
                                 int parsedScore = (int) Double.parseDouble(ts.score());
 
-                                if (isTeamMatch(ts.name(), dbGame.getHomeTeam())) {
+                                if (isTeamMatch(dbGame.getHomeTeam(), ts.name())) {
                                     dbHomeScore = parsedScore;
-                                } else if (isTeamMatch(ts.name(), dbGame.getAwayTeam())) {
+                                } else if (isTeamMatch(dbGame.getAwayTeam(), ts.name())) {
                                     dbAwayScore = parsedScore;
                                 }
                             } catch (Exception ignored) {}
@@ -192,16 +185,47 @@ public class ScoreAndGradingService {
         playerRecordRepo.save(overallRecord);
     }
 
-    private boolean isTeamMatch(String team1, String team2) {
-        if (team1 == null || team2 == null) return false;
+    // Bidirectional normalizer and fuzzy matcher
+    private boolean isTeamMatch(String dbTeam, String apiTeam) {
+        if (dbTeam == null || apiTeam == null) return false;
 
-        String t1 = team1.trim().toLowerCase();
-        String t2 = team2.trim().toLowerCase();
+        String normDb = normalizeTeam(dbTeam);
+        String normApi = normalizeTeam(apiTeam);
 
-        // Apply alias translation if present
-        t1 = TEAM_ALIASES.getOrDefault(t1, t1);
-        t2 = TEAM_ALIASES.getOrDefault(t2, t2);
+        if (normDb.equals(normApi)) return true;
+        if (!normDb.isEmpty() && normApi.contains(normDb)) return true;
+        if (!normApi.isEmpty() && normDb.contains(normApi)) return true;
 
-        return t1.contains(t2) || t2.contains(t1);
+        String cleanDb = dbTeam.toLowerCase().replaceAll("[^a-z0-9 ]", "").trim();
+        String cleanApi = apiTeam.toLowerCase().replaceAll("[^a-z0-9 ]", "").trim();
+        return cleanApi.contains(cleanDb) || cleanDb.contains(cleanApi);
+    }
+
+    private String normalizeTeam(String name) {
+        if (name == null) return "";
+        String s = name.toLowerCase().trim()
+                .replaceAll("&", "and")
+                .replaceAll("[^a-z0-9 ]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+
+        // Collegiate aliases & abbreviation bridges
+        if (s.equals("lsu") || s.contains("louisiana state")) return "lsu";
+        if (s.equals("ole miss") || s.equals("mississippi rebels") || s.equals("mississippi")) return "ole miss";
+        if (s.equals("uconn") || s.contains("connecticut")) return "uconn";
+        if (s.equals("liu") || s.contains("long island")) return "liu";
+        if (s.equals("umass") || s.contains("massachusetts")) return "umass";
+        if (s.equals("appalachian state") || s.contains("app state")) return "app state";
+        if (s.equals("nc state") || s.contains("north carolina state")) return "nc state";
+        if (s.equals("ul monroe") || s.equals("ulm") || s.contains("louisiana monroe")) return "ul monroe";
+        if (s.equals("fiu") || s.contains("florida international")) return "fiu";
+        if (s.equals("fau") || s.contains("florida atlantic")) return "fau";
+        if (s.equals("miami fl") || s.contains("miami hurricanes")) return "miami fl";
+        if (s.equals("miami oh") || s.equals("miami ohio") || s.contains("miami oh redhawks")) return "miami oh";
+        if (s.contains("hawaii")) return "hawaii";
+        if (s.equals("pitt") || s.contains("pittsburgh")) return "pittsburgh";
+        if (s.equals("usc") || s.contains("southern california")) return "usc";
+
+        return s;
     }
 }
