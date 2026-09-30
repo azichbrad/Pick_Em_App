@@ -48,19 +48,22 @@ public class OddsService {
 
     @Cacheable("ncaafOdds")
     public List<GameOddsDTO> getCollegeFootballOdds() {
-        String url = "https://api.sharpapi.io/api/v1/events?sport=football&league=NCAAF&sportsbook=fanduel&limit=200";
+        // CHANGED 'events' to 'odds'
+        String url = "https://api.sharpapi.io/api/v1/odds?sport=football&league=NCAAF&sportsbook=fanduel&limit=200";
         return parseSharpApiResponse(fetchAllSharpApiOdds(url));
     }
 
     @Cacheable("nflOdds")
     public List<GameOddsDTO> getNflOdds() {
-        String url = "https://api.sharpapi.io/api/v1/events?sport=football&league=NFL&sportsbook=fanduel&limit=200";
+        // CHANGED 'events' to 'odds'
+        String url = "https://api.sharpapi.io/api/v1/odds?sport=football&league=NFL&sportsbook=fanduel&limit=200";
         return parseSharpApiResponse(fetchAllSharpApiOdds(url));
     }
 
     private String fetchAllSharpApiOdds(String apiUrl) {
         ArrayNode allData = objectMapper.createArrayNode();
         String cursor = null;
+        int page = 1;
         int offset = 0;
         boolean hasMore = true;
         int pageCount = 0;
@@ -76,33 +79,53 @@ public class OddsService {
                 pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "cursor=" + cursor;
             } else if (offset > 0) {
                 pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "offset=" + offset;
+            } else if (page > 1) {
+                pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "page=" + page;
             }
 
             try {
+                System.out.println("🔍 Fetching SharpAPI Odds: " + pagedUrl);
                 ResponseEntity<String> response = restTemplate.exchange(pagedUrl, HttpMethod.GET, entity, String.class);
                 JsonNode root = objectMapper.readTree(response.getBody());
                 JsonNode dataArray = root.path("data");
 
+                int count = 0;
                 if (dataArray.isArray()) {
                     for (JsonNode node : dataArray) {
                         allData.add(node);
+                        count++;
+
+                        // TEMPORARY QA LOG: Print the first item to see the exact JSON structure
+                        if (count == 1) {
+                            System.out.println("🚨 RAW SHARPAPI PAYLOAD: " + node.toPrettyString());
+                        }
+
+
+                        // TEMPORARY QA LOG: Replace "Alabama" with a team showing bad odds
+                        String matchName = node.path("event_name").asText(""); // adjust key based on SharpAPI
+                        if (matchName.toLowerCase().contains("alabama")) {
+                            System.out.println("🚨 RAW SHARPAPI PAYLOAD: " + node.toPrettyString());
+                        }
                     }
                 }
 
                 JsonNode pagination = root.path("pagination");
-                if (pagination.has("has_more") && pagination.get("has_more").asBoolean()) {
-                    // Check for cursor pagination first, fallback to offset if needed
+                System.out.println("✅ SharpAPI returned " + count + " games. Pagination metadata: " + (pagination != null ? pagination.toString() : "null"));
+
+                if (pagination != null && pagination.has("has_more") && pagination.get("has_more").asBoolean()) {
+                    // Try all known pagination formats
                     if (pagination.has("next_cursor") && !pagination.get("next_cursor").isNull()) {
                         cursor = pagination.get("next_cursor").asText();
                     } else if (pagination.has("next_offset")) {
                         offset = pagination.get("next_offset").asInt();
                     } else {
-                        hasMore = false;
+                        // Fallback: If has_more is true but no cursor/offset is given, increment standard page
+                        page++;
                     }
 
                     pageCount++;
                     try {
-                        Thread.sleep(5000); // 5-second throttle to respect rate limits
+                        Thread.sleep(2000); // Throttle to protect rate limits
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                     }
@@ -110,7 +133,7 @@ public class OddsService {
                     hasMore = false;
                 }
             } catch (Exception e) {
-                System.err.println("API Pagination Error: " + e.getMessage());
+                System.err.println("❌ API Pagination Error: " + e.getMessage());
                 hasMore = false;
             }
         }

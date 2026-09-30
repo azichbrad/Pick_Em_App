@@ -3,17 +3,20 @@ package com.pickem.app.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.pickem.app.dto.GameOddsDTO;
 import com.pickem.app.model.Game;
-import com.pickem.app.model.OddsHistory; // NEW
+import com.pickem.app.model.OddsHistory;
 import com.pickem.app.model.Pick;
 import com.pickem.app.model.Player;
 import com.pickem.app.model.PlayerRecord;
 import com.pickem.app.repository.GameRepository;
-import com.pickem.app.repository.OddsHistoryRepository; // NEW
+import com.pickem.app.repository.OddsHistoryRepository;
 import com.pickem.app.repository.PickRepository;
 import com.pickem.app.repository.PlayerRecordRepository;
 import com.pickem.app.repository.PlayerRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.context.event.EventListener;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -22,11 +25,13 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -66,23 +71,24 @@ public class GameSyncService {
     );
     private final PickRepository pickRepo;
     private final PlayerRecordRepository playerRecordRepo;
-    private final OddsHistoryRepository oddsHistoryRepo; // NEW
+    private final OddsHistoryRepository oddsHistoryRepo;
+    private final RestTemplate restTemplate;
 
     @Value("${cfbd.api.key}")
     private String cfbdApiKey;
 
-    // NEW: Added OddsHistoryRepository to the constructor
-    public GameSyncService(PickRepository pickRepo, GameRepository gameRepo, OddsService oddsService, PlayerRepository playerRepo, PlayerRecordRepository playerRecordRepo, OddsHistoryRepository oddsHistoryRepo) {
+    public GameSyncService(PickRepository pickRepo, GameRepository gameRepo, OddsService oddsService, PlayerRepository playerRepo, PlayerRecordRepository playerRecordRepo, OddsHistoryRepository oddsHistoryRepo, RestTemplateBuilder restTemplateBuilder) {
         this.gameRepo = gameRepo;
         this.oddsService = oddsService;
         this.pickRepo = pickRepo;
         this.playerRepo = playerRepo;
         this.playerRecordRepo = playerRecordRepo;
         this.oddsHistoryRepo = oddsHistoryRepo;
-    }
-
-    @Scheduled(fixedRate = 1800000)
-    public void init() {
+        // Apply 10-second timeouts to prevent hanging threads
+        this.restTemplate = restTemplateBuilder
+                .setConnectTimeout(Duration.ofSeconds(10))
+                .setReadTimeout(Duration.ofSeconds(10))
+                .build();
     }
 
     @Transactional
@@ -171,26 +177,40 @@ public class GameSyncService {
         }
     }
 
+    @EventListener(ApplicationReadyEvent.class)
+    @Scheduled(cron = "0 */30 * * * *")
     public void syncAllOdds() {
-        System.out.println("Starting background odds sync...");
+        System.out.println("🚀 Starting background odds sync...");
 
         if (logoCache.isEmpty()) {
             fetchAndCacheLogos();
         }
 
-        syncSport(oddsService.getCollegeFootballOdds(), "NCAAF");
-        syncSport(oddsService.getNflOdds(), "NFL");
-        System.out.println("Background odds sync completed.");
+        try {
+            System.out.println("🏈 Fetching NCAAF odds...");
+            syncSport(oddsService.getCollegeFootballOdds(), "NCAAF");
+        } catch (Exception e) {
+            System.err.println("❌ Error syncing NCAAF odds: " + e.getMessage());
+        }
+
+        try {
+            System.out.println("🏈 Fetching NFL odds...");
+            syncSport(oddsService.getNflOdds(), "NFL");
+        } catch (Exception e) {
+            System.err.println("❌ Error syncing NFL odds: " + e.getMessage());
+        }
+
+        System.out.println("✅ Background odds sync completed.");
     }
 
     private void fetchAndCacheLogos() {
         try {
-            RestTemplate restTemplate = new RestTemplate();
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(cfbdApiKey);
             HttpEntity<String> entity = new HttpEntity<>(headers);
             String cfbdUrl = "https://api.collegefootballdata.com/teams";
 
+            // Uses the configured RestTemplate with timeouts instead of an infinite new RestTemplate()
             ResponseEntity<JsonNode> response = restTemplate.exchange(
                     cfbdUrl,
                     HttpMethod.GET,
@@ -203,12 +223,17 @@ public class GameSyncService {
                 System.out.println("✅ Successfully built team logo cache!");
             }
         } catch (Exception e) {
-            System.err.println("❌ Failed to fetch CFBD logos: " + e.getMessage());
+            System.err.println("❌ Failed to fetch CFBD logos (API might be down or timed out): " + e.getMessage());
         }
     }
 
     private void syncSport(List<GameOddsDTO> apiOddsList, String sport) {
-        if (apiOddsList == null || apiOddsList.isEmpty()) return;
+        if (apiOddsList == null || apiOddsList.isEmpty()) {
+            System.out.println("⚠️ No odds data received for sport: " + sport + ". Skipping update.");
+            return;
+        }
+
+        System.out.println("📊 Processing " + apiOddsList.size() + " odds items for " + sport);
 
         Map<String, List<GameOddsDTO>> oddsByGame = apiOddsList.stream()
                 .filter(dto -> dto.eventId() != null)
@@ -219,7 +244,7 @@ public class GameSyncService {
                 .collect(Collectors.toMap(Game::getId, g -> g));
 
         Map<String, Game> gamesToSaveMap = new HashMap<>();
-        List<OddsHistory> historyToSaveList = new ArrayList<>(); // NEW: Batch list for history
+        List<OddsHistory> historyToSaveList = new ArrayList<>();
 
         for (Map.Entry<String, List<GameOddsDTO>> entry : oddsByGame.entrySet()) {
             String eventId = entry.getKey();
@@ -231,8 +256,14 @@ public class GameSyncService {
                     gamesToSaveMap.getOrDefault(eventId, new Game()));
 
             if (game.getCommenceTime() != null && game.getCommenceTime().isBefore(Instant.now())) {
+                System.out.println("⏭ SKIPPING " + baseInfo.awayTeam() + " @ " + baseInfo.homeTeam() + " - Start time is in the past: " + game.getCommenceTime());
                 continue;
             }
+
+            // Track previous lines to prevent OddsHistory spam
+            Double previousAwaySpread = game.getAwaySpread();
+            Double previousHomeSpread = game.getHomeSpread();
+            Double previousTotal = game.getOverTotal();
 
             game.setId(eventId);
             game.setSport(sport);
@@ -243,17 +274,24 @@ public class GameSyncService {
             game.setCommenceTime(baseInfo.eventStartTime());
 
             for (GameOddsDTO odd : gameOdds) {
-                if ("point_spread".equalsIgnoreCase(odd.marketType()) && odd.line() != null) {
-                    if (odd.selection().equals(game.getAwayTeam())) {
+                if (odd.selection() == null || odd.line() == null) continue;
+
+                String selection = odd.selection().trim().toLowerCase();
+                String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam().trim().toLowerCase() : "";
+                String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam().trim().toLowerCase() : "";
+
+                // Case-insensitive fuzzy matching so SharpAPI data doesn't get dropped
+                if ("point_spread".equalsIgnoreCase(odd.marketType())) {
+                    if (selection.equalsIgnoreCase(awayTeam) || awayTeam.contains(selection) || selection.contains(awayTeam)) {
                         game.setAwaySpread(odd.line());
-                    } else if (odd.selection().equals(game.getHomeTeam())) {
+                    } else if (selection.equalsIgnoreCase(homeTeam) || homeTeam.contains(selection) || selection.contains(homeTeam)) {
                         game.setHomeSpread(odd.line());
                     }
                 }
-                else if ("total_points".equalsIgnoreCase(odd.marketType()) && odd.line() != null) {
-                    if ("Over".equalsIgnoreCase(odd.selection())) {
+                else if ("total_points".equalsIgnoreCase(odd.marketType())) {
+                    if ("over".equalsIgnoreCase(selection)) {
                         game.setOverTotal(odd.line());
-                    } else if ("Under".equalsIgnoreCase(odd.selection())) {
+                    } else if ("under".equalsIgnoreCase(selection)) {
                         game.setUnderTotal(odd.line());
                     }
                 }
@@ -261,19 +299,24 @@ public class GameSyncService {
 
             gamesToSaveMap.put(game.getId(), game);
 
-            // NEW: Create and populate the historical row after the game updates are compiled
-            OddsHistory newOdds = new OddsHistory();
-            newOdds.setGameId(game.getId());
-            newOdds.setHomeSpread(game.getHomeSpread());
-            newOdds.setAwaySpread(game.getAwaySpread());
-            newOdds.setTotal(game.getOverTotal()); // Storing a single total since Over/Under are symmetrical
+            // Only insert into OddsHistory if the lines actually moved since the last poll
+            boolean linesChanged = !Objects.equals(previousAwaySpread, game.getAwaySpread()) ||
+                    !Objects.equals(previousHomeSpread, game.getHomeSpread()) ||
+                    !Objects.equals(previousTotal, game.getOverTotal());
 
-            historyToSaveList.add(newOdds);
+            if (linesChanged) {
+                OddsHistory newOdds = new OddsHistory();
+                newOdds.setGameId(game.getId());
+                newOdds.setHomeSpread(game.getHomeSpread());
+                newOdds.setAwaySpread(game.getAwaySpread());
+                newOdds.setTotal(game.getOverTotal());
+                historyToSaveList.add(newOdds);
+            }
         }
 
-        // Save both tables in efficient bulk batches
         gameRepo.saveAll(gamesToSaveMap.values());
-        oddsHistoryRepo.saveAll(historyToSaveList); // NEW: Save history to the vault
+        oddsHistoryRepo.saveAll(historyToSaveList);
+        System.out.println("✅ Saved " + gamesToSaveMap.size() + " games and logged " + historyToSaveList.size() + " line movements for " + sport);
     }
 
     public void buildLogoCache(JsonNode cfbdTeamsArray) {
@@ -312,20 +355,16 @@ public class GameSyncService {
 
         String cleanName = oddsApiTeamName.trim().toLowerCase();
 
-        // 1. Isolate NFL checks so they never overwrite College teams!
         if ("NFL".equalsIgnoreCase(sport)) {
-            // Catch truncated names from SharpAPI
             if (cleanName.equals("arizona") || cleanName.equals("az cardinals") || cleanName.equals("ari cardinals")) {
                 return "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png";
             }
 
-            // Check the standard abbreviation map
             if (NFL_ABBREVIATIONS.containsKey(cleanName)) {
                 return "https://a.espncdn.com/i/teamlogos/nfl/500/" + NFL_ABBREVIATIONS.get(cleanName) + ".png";
             }
         }
 
-        // 2. Check College Overrides & Cache
         cleanName = MANUAL_OVERRIDES.getOrDefault(cleanName, cleanName);
         String url = logoCache.get(cleanName);
 
@@ -336,19 +375,15 @@ public class GameSyncService {
         return url;
     }
 
-    // Normalize team names for logo resolution to prevent broken image links
     private String normalizeTeamForLogo(String sport, String rawTeamName) {
         if (rawTeamName == null) return "";
         String team = rawTeamName.trim().toLowerCase();
 
-        // NFL Logo Overrides (handles truncated SharpAPI names like "Arizona" or "ARI Cardinals")
         if (sport != null && sport.toLowerCase().contains("nfl")) {
             if (team.contains("arizona") || team.contains("cardinals") || team.equals("ari")) {
                 return "Arizona Cardinals";
             }
-        }
-        // College Football Logo Overrides (handles "Miami FL" vs "Miami")
-        else {
+        } else {
             if (team.contains("miami") && !team.contains("ohio")) {
                 return "Miami";
             }

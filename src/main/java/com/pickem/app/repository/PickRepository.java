@@ -13,6 +13,7 @@ public interface PickRepository extends JpaRepository<Pick, Long> {
 
     List<Pick> findByGameIdAndStatus(String gameId, String status);
     List<Pick> findByWeekNumberAndSport(Integer weekNumber, String sport);
+    Optional<Pick> findByPlayerIdAndSportAndWeekNumberAndSlotNumber(Long playerId, String sport, Integer weekNumber, Integer slotNumber);
 
     // --- ADD THIS NEW METHOD HERE ---
     List<Pick> findByPlayerIdAndSport(Long playerId, String sport);

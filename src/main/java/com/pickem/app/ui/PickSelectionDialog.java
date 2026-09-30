@@ -21,6 +21,7 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.component.textfield.TextFieldVariant;
 import com.vaadin.flow.data.value.ValueChangeMode;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 
@@ -227,13 +228,12 @@ public class PickSelectionDialog extends Dialog {
                 awayBtn.setText("Locked");
                 awayBtn.setEnabled(false);
             } else if (awayPoint != null) {
-                boolean isBurned = burnedSet.contains(game.getId() + "_spread_" + awayTeam);
-                if (isBurned) {
-                    awayBtn.setText("Burned");
-                    awayBtn.setEnabled(false);
+                String pointStr = awayPoint > 0 ? "+" + awayPoint : String.valueOf(awayPoint);
+                awayBtn.setText(pointStr); // Always show the odds
+
+                if (burnedSet.contains(game.getId() + "_spread_" + awayTeam)) {
+                    awayBtn.setEnabled(false); // Dim and disable if burned
                 } else {
-                    String pointStr = awayPoint > 0 ? "+" + awayPoint : String.valueOf(awayPoint);
-                    awayBtn.setText(pointStr);
                     String selectionStr = awayTeam + " " + pointStr;
                     awayBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, awayLogoUrl, game.getId(), awayPoint, matchNameStr, "spread", awayTeam, onPickSaved));
                 }
@@ -248,13 +248,12 @@ public class PickSelectionDialog extends Dialog {
                 overBtn.setText("Locked");
                 overBtn.setEnabled(false);
             } else if (overPoint != null) {
-                boolean isBurned = burnedSet.contains(game.getId() + "_total_Over");
-                if (isBurned) {
-                    overBtn.setText("Burned");
+                String pointStr = "O " + overPoint;
+                overBtn.setText(pointStr);
+
+                if (burnedSet.contains(game.getId() + "_total_Over")) {
                     overBtn.setEnabled(false);
                 } else {
-                    String pointStr = "O " + overPoint;
-                    overBtn.setText(pointStr);
                     String selectionStr = matchNameStr + " " + pointStr;
                     overBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, dualLogoUrls, game.getId(), overPoint, matchNameStr, "total", "Over", onPickSaved));
                 }
@@ -288,13 +287,12 @@ public class PickSelectionDialog extends Dialog {
                 homeBtn.setText("Locked");
                 homeBtn.setEnabled(false);
             } else if (homePoint != null) {
-                boolean isBurned = burnedSet.contains(game.getId() + "_spread_" + homeTeam);
-                if (isBurned) {
-                    homeBtn.setText("Burned");
+                String pointStr = homePoint > 0 ? "+" + homePoint : String.valueOf(homePoint);
+                homeBtn.setText(pointStr);
+
+                if (burnedSet.contains(game.getId() + "_spread_" + homeTeam)) {
                     homeBtn.setEnabled(false);
                 } else {
-                    String pointStr = homePoint > 0 ? "+" + homePoint : String.valueOf(homePoint);
-                    homeBtn.setText(pointStr);
                     String selectionStr = homeTeam + " " + pointStr;
                     homeBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, homeLogoUrl, game.getId(), homePoint, matchNameStr, "spread", homeTeam, onPickSaved));
                 }
@@ -309,13 +307,12 @@ public class PickSelectionDialog extends Dialog {
                 underBtn.setText("Locked");
                 underBtn.setEnabled(false);
             } else if (underPoint != null) {
-                boolean isBurned = burnedSet.contains(game.getId() + "_total_Under");
-                if (isBurned) {
-                    underBtn.setText("Burned");
+                String pointStr = "U " + underPoint;
+                underBtn.setText(pointStr);
+
+                if (burnedSet.contains(game.getId() + "_total_Under")) {
                     underBtn.setEnabled(false);
                 } else {
-                    String pointStr = "U " + underPoint;
-                    underBtn.setText(pointStr);
                     String selectionStr = matchNameStr + " " + pointStr;
                     underBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, dualLogoUrls, game.getId(), underPoint, matchNameStr, "total", "Under", onPickSaved));
                 }
@@ -367,13 +364,21 @@ public class PickSelectionDialog extends Dialog {
                             String logoUrl, String gameId, Double lockedPoint, String matchName,
                             String marketType, String selectionSide, Runnable onPickSaved) {
 
-        // Security check: ensure logged-in user owns this player slot
+        // Security check: ensure logged-in user owns this player slot or is Admin
         if (!canUserEditPlayer(player)) {
             System.out.println("Unauthorized pick attempt for player: " + player.getName());
             return;
         }
 
-        pickService.savePickWithBurnCheck(player, slotNumber, sport, weekNumber, selection, logoUrl, gameId, lockedPoint, matchName, marketType, selectionSide, onPickSaved);
+        // 1. Pass an empty lambda () -> {} so the service doesn't trigger the UI refresh prematurely
+        pickService.savePickWithBurnCheck(player, slotNumber, sport, weekNumber, selection, logoUrl,
+                gameId, lockedPoint, matchName, marketType, selectionSide, () -> {});
+
+        // 2. The transaction is now fully committed! We can safely refresh the UI.
+        if (onPickSaved != null) {
+            onPickSaved.run();
+        }
+
         close();
     }
 
@@ -404,19 +409,30 @@ public class PickSelectionDialog extends Dialog {
     }
 
     private boolean canUserEditPlayer(Player targetPlayer) {
-        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+
+        // 1. Safely check if the Vaadin WebSocket lost the auth context
+        if (auth == null || !auth.isAuthenticated()) {
+            System.out.println("⚠️ Auth missing or user not authenticated.");
+            return false;
+        }
+
+        Object principal = auth.getPrincipal();
+
         if (principal instanceof OAuth2User oauth2User) {
             String loggedInEmail = oauth2User.getAttribute("email");
+            String loggedInName = oauth2User.getAttribute("name");
+
             if (loggedInEmail == null) return false;
 
-            // 1. Allow if the logged-in user's email matches the target player's assigned email
-            if (targetPlayer.getEmail() != null && targetPlayer.getEmail().equalsIgnoreCase(loggedInEmail)) {
+            // Admin Override
+            boolean isAdmin = (loggedInName != null && loggedInName.toLowerCase().contains("azich"));
+            if (isAdmin) {
                 return true;
             }
 
-            // 2. Allow if the logged-in user is Brad (Admin) based on the database flag
-            // (Assumes you set admin = true for your player row in Supabase)
-            if (targetPlayer.isAdmin() && targetPlayer.getEmail() != null && targetPlayer.getEmail().equalsIgnoreCase(loggedInEmail)) {
+            // Standard User Check
+            if (targetPlayer.getEmail() != null && targetPlayer.getEmail().equalsIgnoreCase(loggedInEmail)) {
                 return true;
             }
         }

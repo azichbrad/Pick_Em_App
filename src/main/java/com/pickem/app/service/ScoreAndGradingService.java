@@ -30,24 +30,28 @@ public class ScoreAndGradingService {
         this.playerRecordRepo = playerRecordRepo;
     }
 
-    @PostConstruct
-    public void forceRunOnStartup() {
-        System.out.println("Waking up! Running an immediate score sync...");
-        syncScoresAndGrade();
+    // 1. LIGHTWEIGHT HOURLY SYNC: Only looks back 1 day (Uses ~4-6 requests per hour)
+    @Scheduled(cron = "0 0 * * * *")
+    public void hourlyActiveSync() {
+        System.out.println("Starting lightweight hourly score sync...");
+
+        // 1-day lookback grabs today and yesterday's games without burning limits
+        processScores(oddsService.getCompletedScores("americanfootball_ncaaf", 1));
+        processScores(oddsService.getCompletedScores("americanfootball_nfl", 1));
+
+        System.out.println("Hourly sync completed.");
     }
 
-    @Scheduled(cron = "0 0 * * * *")
-    public void syncScoresAndGrade() {
-        System.out.println("Starting score sync and grading engine...");
+    // 2. DEEP NIGHTLY SYNC: Runs once a day at 2:00 AM to catch stragglers (Uses ~22 requests)
+    @Scheduled(cron = "0 0 2 * * *")
+    public void nightlyDeepSync() {
+        System.out.println("Starting heavy nightly deep score sync...");
 
-        // Look back 10 days so all completed games from the previous week are caught
-        List<ScoreDTO> ncaafScores = oddsService.getCompletedScores("americanfootball_ncaaf", 10);
-        List<ScoreDTO> nflScores = oddsService.getCompletedScores("americanfootball_nfl", 10);
+        // 10-day lookback to catch weird API delays, only costs limits once a day!
+        processScores(oddsService.getCompletedScores("americanfootball_ncaaf", 10));
+        processScores(oddsService.getCompletedScores("americanfootball_nfl", 10));
 
-        processScores(ncaafScores);
-        processScores(nflScores);
-
-        System.out.println("Score sync and grading completed.");
+        System.out.println("Nightly deep sync completed.");
     }
 
     private void processScores(List<ScoreDTO> apiScores) {

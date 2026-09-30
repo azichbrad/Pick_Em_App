@@ -24,7 +24,7 @@ public class AdminController {
 
     @GetMapping("/sync-scores")
     public String syncScores() {
-        gradingService.syncScoresAndGrade();
+        gradingService.hourlyActiveSync();
         return "Background score sync completed!";
     }
 

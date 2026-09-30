@@ -7,6 +7,7 @@ import com.pickem.app.repository.BurnedSelectionRepository;
 import com.pickem.app.repository.GameRepository;
 import com.pickem.app.repository.PickRepository;
 import com.vaadin.flow.component.notification.Notification;
+import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -33,6 +34,7 @@ public class PickService {
         );
     }
 
+    @Transactional
     public void savePickWithBurnCheck(Player player, int slotNumber, String sport, int weekNumber,
                                       String selection, String logoUrl, String gameId, Double lockedPoint,
                                       String matchName, String marketType, String selectionSide, Runnable onPickSaved) {
@@ -47,8 +49,10 @@ public class PickService {
             }
         }
 
-        // 2. Fetch the existing pick for this slot
-        Optional<Pick> existingPickOpt = pickRepo.findByPlayerIdAndWeekNumberAndSlotNumber(player.getId(), weekNumber, slotNumber);
+        // 2. Fetch the existing pick for this specific sport's slot
+        Optional<Pick> existingPickOpt = pickRepo.findByPlayerIdAndSportAndWeekNumberAndSlotNumber(
+                player.getId(), sport, weekNumber, slotNumber
+        );
 
         if (existingPickOpt.isPresent()) {
             Pick existingPick = existingPickOpt.get();
