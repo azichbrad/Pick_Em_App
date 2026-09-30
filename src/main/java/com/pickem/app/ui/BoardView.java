@@ -20,6 +20,8 @@ import com.vaadin.flow.component.tabs.TabSheetVariant;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.theme.lumo.Lumo;
 import jakarta.annotation.security.PermitAll;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.List;
 import java.util.Optional;
@@ -110,7 +112,6 @@ public class BoardView extends VerticalLayout {
         weekSelector.setValue(calculateCurrentWeek(sport));
         weekSelector.setWidth("220px");
 
-        // 1. Create the Left Arrow (Previous Week)
         Button prevButton = new Button(com.vaadin.flow.component.icon.VaadinIcon.ANGLE_LEFT.create());
         prevButton.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_ICON, com.vaadin.flow.component.button.ButtonVariant.LUMO_TERTIARY);
         prevButton.addClickListener(e -> {
@@ -120,7 +121,6 @@ public class BoardView extends VerticalLayout {
             }
         });
 
-        // 2. Create the Right Arrow (Next Week)
         Button nextButton = new Button(com.vaadin.flow.component.icon.VaadinIcon.ANGLE_RIGHT.create());
         nextButton.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_ICON, com.vaadin.flow.component.button.ButtonVariant.LUMO_TERTIARY);
         nextButton.addClickListener(e -> {
@@ -134,14 +134,11 @@ public class BoardView extends VerticalLayout {
         boardGrid.setSizeFull();
         boardGrid.setPadding(false);
 
-        // 3. Group the arrows and dropdown together
         HorizontalLayout leftControls = new HorizontalLayout(prevButton, weekSelector, nextButton);
-        // Use Alignment.END so the arrows align with the input box, not the "Week" label
         leftControls.setAlignItems(Alignment.END);
 
         controls.add(leftControls);
 
-        // 4. Initial render and listeners
         prevButton.setEnabled(weekSelector.getValue() > minWeek);
         nextButton.setEnabled(weekSelector.getValue() < maxWeek);
 
@@ -150,7 +147,6 @@ public class BoardView extends VerticalLayout {
         weekSelector.addValueChangeListener(event -> {
             Integer val = event.getValue();
             if (val != null) {
-                // Instantly lock/unlock the arrows if we hit the boundary
                 prevButton.setEnabled(val > minWeek);
                 nextButton.setEnabled(val < maxWeek);
                 renderPlayerColumns(boardGrid, sport, val);
@@ -179,7 +175,6 @@ public class BoardView extends VerticalLayout {
                         java.util.stream.Collectors.toMap(Pick::getSlotNumber, p -> p, (p1, p2) -> p1)
                 ));
 
-        // NEW: Fetch all games for the week once to check individual lock times instantly
         List<com.pickem.app.model.Game> weeklyGames = gameSyncService.getGamesForSportAndWeekFromDb(sport, selectedWeek);
         java.util.Map<String, com.pickem.app.model.Game> gamesMap = weeklyGames == null ? java.util.Map.of() :
                 weeklyGames.stream().collect(java.util.stream.Collectors.toMap(com.pickem.app.model.Game::getId, g -> g));
@@ -188,22 +183,66 @@ public class BoardView extends VerticalLayout {
 
         HorizontalLayout leaderboardBar = new HorizontalLayout();
         leaderboardBar.setWidthFull();
-        leaderboardBar.getStyle().set("background", "#1e293b").set("padding", "10px 16px").set("border-radius", "8px");
+        leaderboardBar.getStyle()
+                .set("flex-wrap", "nowrap")
+                .set("overflow-x", "auto")
+                .set("gap", "16px")
+                .set("padding-bottom", "8px")
+                .set("-webkit-overflow-scrolling", "touch")
+                .set("align-items", "baseline")
+                // ADD THESE TWO LINES:
+                .set("flex-shrink", "0")
+                .set("min-height", "45px");
         leaderboardBar.setAlignItems(Alignment.CENTER);
 
         Span leaderboardTitle = new Span("🏆 " + sport + " Overall Leaderboard: ");
-        leaderboardTitle.getStyle().set("font-weight", "bold").set("color", "#38bdf8");
+        leaderboardTitle.getStyle()
+                .set("font-weight", "bold")
+                .set("color", "#38bdf8")
+                .set("white-space", "nowrap"); // Protects the title from breaking
         leaderboardBar.add(leaderboardTitle);
 
         for (PlayerRecord rec : overallRecords) {
             Span statSpan = new Span(rec.getPlayer().getName() + ": " + rec.getWins() + "W-" + rec.getLosses() + "L-" + rec.getPushes() + "P");
-            statSpan.getStyle().set("color", "#f8fafc").set("margin-right", "15px");
+            statSpan.getStyle().set("white-space", "nowrap"); // Protects the scores from breaking
             leaderboardBar.add(statSpan);
         }
         boardGrid.add(leaderboardBar);
 
+        // 2. SIGNED-IN USER SORTING FIX (OAUTH SAFE)
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String currentUser = "";
+
+        if (auth != null) {
+            // Check if it's an OAuth2 login to grab the actual readable name
+            if (auth.getPrincipal() instanceof org.springframework.security.oauth2.core.user.OAuth2User oauthUser) {
+                // Try to grab the "name" or "given_name" from Google/Github
+                currentUser = oauthUser.getAttribute("name");
+                if (currentUser == null) currentUser = oauthUser.getAttribute("given_name");
+            }
+
+            // Fallback to standard auth name or email
+            if (currentUser == null || currentUser.isEmpty()) {
+                currentUser = auth.getName();
+            }
+        }
+
+        final String loggedInUserLower = currentUser != null ? currentUser.toLowerCase() : "";
+
         List<Player> players = playerRepo.findAll();
         players.sort((p1, p2) -> {
+            String p1Name = p1.getName().toLowerCase();
+            String p2Name = p2.getName().toLowerCase();
+
+            // Fuzzy match: Does "Bradley Azich" contain "Brad"?
+            boolean isP1Current = !loggedInUserLower.isEmpty() && (loggedInUserLower.contains(p1Name) || p1Name.contains(loggedInUserLower));
+            boolean isP2Current = !loggedInUserLower.isEmpty() && (loggedInUserLower.contains(p2Name) || p2Name.contains(loggedInUserLower));
+
+            // Force the logged-in user to the very top
+            if (isP1Current && !isP2Current) return -1;
+            if (!isP1Current && isP2Current) return 1;
+
+            // Otherwise, sort the rest by their weekly records
             PlayerRecord r1 = weeklyRecordMap.getOrDefault(p1.getId(), new PlayerRecord(p1, sport, selectedWeek));
             PlayerRecord r2 = weeklyRecordMap.getOrDefault(p2.getId(), new PlayerRecord(p2, sport, selectedWeek));
 
@@ -254,7 +293,6 @@ public class BoardView extends VerticalLayout {
                 int currentSlot = slot;
                 Pick existingPick = slotPickMap.get(currentSlot);
 
-                // NEW: Check if this specific game is locked
                 boolean gameLocked = false;
                 if (existingPick != null && existingPick.getGameId() != null) {
                     com.pickem.app.model.Game game = gamesMap.get(existingPick.getGameId());
@@ -329,7 +367,6 @@ public class BoardView extends VerticalLayout {
                     com.vaadin.flow.component.html.Div bottomRow = new com.vaadin.flow.component.html.Div();
                     bottomRow.addClassName("pick-card-bottom");
 
-                    // NEW: Append a padlock if this specific game has started
                     Span lineBadge = new Span(lineBadgeText + (gameLocked ? " 🔒" : ""));
                     lineBadge.addClassName("pick-line-badge");
                     bottomRow.add(lineBadge);
@@ -349,9 +386,8 @@ public class BoardView extends VerticalLayout {
                     }
                 }
 
-                // NEW: Combine global week lock OR individual game lock
                 if (weekLocked || gameLocked) {
-                    slotButton.getStyle().set("cursor", "default"); // No pointer finger
+                    slotButton.getStyle().set("cursor", "default");
 
                     if (weekLocked && existingPick == null) {
                         slotButton.setText("🔒 Locked");
