@@ -44,15 +44,13 @@ public class OddsService {
 
     @Cacheable("ncaafOdds")
     public List<GameOddsDTO> getCollegeFootballOdds() {
-        // CHANGED 'events' to 'odds'
-        String url = "https://api.sharpapi.io/api/v1/odds?sport=football&league=NCAAF&sportsbook=fanduel&limit=200&is_main_line=true";
+        String url = "https://api.sharpapi.io/api/v1/odds?sport=football&league=NCAAF&sportsbook=fanduel&limit=200&market=moneyline,point_spread,total_points";
         return parseSharpApiResponse(fetchAllSharpApiOdds(url));
     }
 
     @Cacheable("nflOdds")
     public List<GameOddsDTO> getNflOdds() {
-        // CHANGED 'events' to 'odds'
-        String url = "https://api.sharpapi.io/api/v1/odds?sport=football&league=NFL&sportsbook=fanduel&limit=200";
+        String url = "https://api.sharpapi.io/api/v1/odds?sport=football&league=NFL&sportsbook=fanduel&limit=200&market=moneyline,point_spread,total_points";
         return parseSharpApiResponse(fetchAllSharpApiOdds(url));
     }
 
@@ -69,11 +67,10 @@ public class OddsService {
         headers.set("Accept", "application/json");
         org.springframework.http.HttpEntity<String> entity = new org.springframework.http.HttpEntity<>(headers);
 
-        while (hasMore && pageCount < 20) { // Safety break limit
+        while (hasMore && pageCount < 20) {
             String pagedUrl = apiUrl;
             try {
                 if (cursor != null && !cursor.isEmpty()) {
-                    // CRITICAL FIX: URL-Encode the Base64 cursor so '+' and '=' don't break the request
                     pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "cursor=" +
                             java.net.URLEncoder.encode(cursor, java.nio.charset.StandardCharsets.UTF_8);
                 } else if (offset > 0) {
@@ -109,14 +106,22 @@ public class OddsService {
 
                     pageCount++;
 
-                    // CRITICAL FIX: 5000ms = 1 request every 5 seconds = Exactly 12 per minute
+                    // CRITICAL FIX: Increased to 6000ms (10 requests per min) to guarantee safe overhead
                     try {
-                        Thread.sleep(5000);
+                        Thread.sleep(6000);
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                     }
                 } else {
                     hasMore = false;
+                }
+            } catch (org.springframework.web.client.HttpClientErrorException.TooManyRequests e) {
+                // SMART RETRY: If SharpAPI throws 429, don't break the loop! Wait 30 seconds and try the same URL again.
+                System.err.println("⚠️ Rate Limit Hit! Pausing for 30 seconds before retrying...");
+                try {
+                    Thread.sleep(30000);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
                 }
             } catch (Exception e) {
                 System.err.println("❌ API Pagination Error on page " + (pageCount + 1) + ": " + e.getMessage());
