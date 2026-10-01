@@ -252,8 +252,18 @@ public class GameSyncService {
 
             GameOddsDTO baseInfo = gameOdds.get(0);
 
-            Game game = existingGamesMap.getOrDefault(eventId,
-                    gamesToSaveMap.getOrDefault(eventId, new Game()));
+            // 1. Check if we are already processing it in this current batch
+            Game game = gamesToSaveMap.get(eventId);
+
+            // 2. Check the pre-loaded memory map
+            if (game == null) {
+                game = existingGamesMap.get(eventId);
+            }
+
+            // 3. BULLETPROOF FALLBACK: Query the database directly before creating a new one
+            if (game == null) {
+                game = gameRepo.findById(eventId).orElse(new Game());
+            }
 
             if (game.getCommenceTime() != null && game.getCommenceTime().isBefore(Instant.now())) {
                 System.out.println("⏭ SKIPPING " + baseInfo.awayTeam() + " @ " + baseInfo.homeTeam() + " - Start time is in the past: " + game.getCommenceTime());
