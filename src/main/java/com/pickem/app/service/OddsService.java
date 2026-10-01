@@ -3,8 +3,6 @@ package com.pickem.app.service;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.pickem.app.dto.GameOddsDTO;
 import com.pickem.app.dto.ScoreDTO;
@@ -17,10 +15,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -49,7 +45,7 @@ public class OddsService {
     @Cacheable("ncaafOdds")
     public List<GameOddsDTO> getCollegeFootballOdds() {
         // CHANGED 'events' to 'odds'
-        String url = "https://api.sharpapi.io/api/v1/odds?sport=football&league=NCAAF&sportsbook=fanduel&limit=200";
+        String url = "https://api.sharpapi.io/api/v1/odds?sport=football&league=NCAAF&sportsbook=fanduel&limit=200&is_main_line=true";
         return parseSharpApiResponse(fetchAllSharpApiOdds(url));
     }
 
@@ -61,71 +57,61 @@ public class OddsService {
     }
 
     private String fetchAllSharpApiOdds(String apiUrl) {
-        ArrayNode allData = objectMapper.createArrayNode();
+        com.fasterxml.jackson.databind.node.ArrayNode allData = objectMapper.createArrayNode();
         String cursor = null;
         int page = 1;
         int offset = 0;
         boolean hasMore = true;
         int pageCount = 0;
 
-        HttpHeaders headers = new HttpHeaders();
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
         headers.setBearerAuth(sharpApiKey);
         headers.set("Accept", "application/json");
-        HttpEntity<String> entity = new HttpEntity<>(headers);
+        org.springframework.http.HttpEntity<String> entity = new org.springframework.http.HttpEntity<>(headers);
 
         while (hasMore && pageCount < 20) { // Safety break limit
             String pagedUrl = apiUrl;
-            if (cursor != null && !cursor.isEmpty()) {
-                pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "cursor=" + cursor;
-            } else if (offset > 0) {
-                pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "offset=" + offset;
-            } else if (page > 1) {
-                pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "page=" + page;
-            }
-
             try {
+                if (cursor != null && !cursor.isEmpty()) {
+                    // CRITICAL FIX: URL-Encode the Base64 cursor so '+' and '=' don't break the request
+                    pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "cursor=" +
+                            java.net.URLEncoder.encode(cursor, java.nio.charset.StandardCharsets.UTF_8);
+                } else if (offset > 0) {
+                    pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "offset=" + offset;
+                } else if (page > 1) {
+                    pagedUrl += (apiUrl.contains("?") ? "&" : "?") + "page=" + page;
+                }
+
                 System.out.println("🔍 Fetching SharpAPI Odds: " + pagedUrl);
-                ResponseEntity<String> response = restTemplate.exchange(pagedUrl, HttpMethod.GET, entity, String.class);
-                JsonNode root = objectMapper.readTree(response.getBody());
-                JsonNode dataArray = root.path("data");
+                org.springframework.http.ResponseEntity<String> response = restTemplate.exchange(pagedUrl, org.springframework.http.HttpMethod.GET, entity, String.class);
+                com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(response.getBody());
+                com.fasterxml.jackson.databind.JsonNode dataArray = root.path("data");
 
                 int count = 0;
                 if (dataArray.isArray()) {
-                    for (JsonNode node : dataArray) {
+                    for (com.fasterxml.jackson.databind.JsonNode node : dataArray) {
                         allData.add(node);
                         count++;
-
-                        // TEMPORARY QA LOG: Print the first item to see the exact JSON structure
-                        if (count == 1) {
-                            System.out.println("🚨 RAW SHARPAPI PAYLOAD: " + node.toPrettyString());
-                        }
-
-
-                        // TEMPORARY QA LOG: Replace "Alabama" with a team showing bad odds
-                        String matchName = node.path("event_name").asText(""); // adjust key based on SharpAPI
-                        if (matchName.toLowerCase().contains("alabama")) {
-                            System.out.println("🚨 RAW SHARPAPI PAYLOAD: " + node.toPrettyString());
-                        }
                     }
                 }
 
-                JsonNode pagination = root.path("pagination");
-                System.out.println("✅ SharpAPI returned " + count + " games. Pagination metadata: " + (pagination != null ? pagination.toString() : "null"));
+                com.fasterxml.jackson.databind.JsonNode pagination = root.path("pagination");
+                System.out.println("✅ SharpAPI returned " + count + " lines on this page.");
 
                 if (pagination != null && pagination.has("has_more") && pagination.get("has_more").asBoolean()) {
-                    // Try all known pagination formats
                     if (pagination.has("next_cursor") && !pagination.get("next_cursor").isNull()) {
                         cursor = pagination.get("next_cursor").asText();
                     } else if (pagination.has("next_offset")) {
                         offset = pagination.get("next_offset").asInt();
                     } else {
-                        // Fallback: If has_more is true but no cursor/offset is given, increment standard page
                         page++;
                     }
 
                     pageCount++;
+
+                    // CRITICAL FIX: 5000ms = 1 request every 5 seconds = Exactly 12 per minute
                     try {
-                        Thread.sleep(2000); // Throttle to protect rate limits
+                        Thread.sleep(5000);
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                     }
@@ -133,12 +119,12 @@ public class OddsService {
                     hasMore = false;
                 }
             } catch (Exception e) {
-                System.err.println("❌ API Pagination Error: " + e.getMessage());
+                System.err.println("❌ API Pagination Error on page " + (pageCount + 1) + ": " + e.getMessage());
                 hasMore = false;
             }
         }
 
-        ObjectNode combinedRoot = objectMapper.createObjectNode();
+        com.fasterxml.jackson.databind.node.ObjectNode combinedRoot = objectMapper.createObjectNode();
         combinedRoot.set("data", allData);
         return combinedRoot.toString();
     }
@@ -249,61 +235,6 @@ public class OddsService {
 
         System.out.println("✅ Total scores successfully parsed from Highlightly for " + sport + ": " + finalScores.size());
         return finalScores;
-    }
-
-//    private ScoreDTO fetchHighlightlyBoxScore(String matchId, String sport, HttpHeaders headers) {
-//        String boxScoreUrl = "https://sports.highlightly.net/american-football/matches/" + matchId + "/boxscore";
-//
-//        try {
-//            HttpEntity<String> entity = new HttpEntity<>(headers);
-//            ResponseEntity<JsonNode> response = restTemplate.exchange(boxScoreUrl, HttpMethod.GET, entity, JsonNode.class);
-//            JsonNode boxRoot = response.getBody();
-//
-//            if (boxRoot != null) {
-//                String homeTeam = boxRoot.path("homeTeam").path("name").asText(boxRoot.path("home_team").asText());
-//                String awayTeam = boxRoot.path("awayTeam").path("name").asText(boxRoot.path("away_team").asText());
-//                String homeScore = boxRoot.path("homeScore").asText(boxRoot.path("home_points").asText());
-//                String awayScore = boxRoot.path("awayScore").asText(boxRoot.path("away_points").asText());
-//
-//                List<ScoreDTO.TeamScoreDTO> teamScores = List.of(
-//                        new ScoreDTO.TeamScoreDTO(homeTeam, homeScore),
-//                        new ScoreDTO.TeamScoreDTO(awayTeam, awayScore)
-//                );
-//
-//                return new ScoreDTO(matchId, sport, true, homeTeam, awayTeam, teamScores);
-//            }
-//        } catch (Exception e) {
-//            System.err.println("❌ Failed to fetch box score for match ID " + matchId + ": " + e.getMessage());
-//        }
-//        return null;
-//    }
-//
-//    public List<GameOddsDTO> getOddsForSportAndWeek(String sport, int weekNumber) {
-//        List<GameOddsDTO> allGames = getOddsForSport(sport);
-//        if (allGames == null || allGames.isEmpty()) {
-//            return List.of();
-//        }
-//
-//        ZonedDateTime week1Start = "NFL".equalsIgnoreCase(sport)
-//                ? ZonedDateTime.of(2026, 9, 8, 0, 0, 0, 0, ZoneId.of("America/Los_Angeles"))
-//                : ZonedDateTime.of(2026, 8, 30, 0, 0, 0, 0, ZoneId.of("America/Los_Angeles"));
-//
-//        Instant windowStart = week1Start.plusDays((weekNumber - 1) * 7L).toInstant();
-//        Instant windowEnd = week1Start.plusDays(weekNumber * 7L).toInstant();
-//
-//        return allGames.stream()
-//                .filter(game -> game.eventStartTime() != null &&
-//                        !game.eventStartTime().isBefore(windowStart) &&
-//                        game.eventStartTime().isBefore(windowEnd))
-//                .toList();
-//    }
-
-    public List<GameOddsDTO> getOddsForSport(String sport) {
-        if ("NFL".equalsIgnoreCase(sport)) {
-            return getNflOdds();
-        } else {
-            return getCollegeFootballOdds();
-        }
     }
 
     private List<GameOddsDTO> parseSharpApiResponse(String jsonBody) {
