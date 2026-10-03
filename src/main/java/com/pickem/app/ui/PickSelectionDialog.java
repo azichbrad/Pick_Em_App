@@ -44,12 +44,24 @@ public class PickSelectionDialog extends Dialog {
     private final PickService pickService;
     private static final String TOTALS_ICON = "https://cdn-icons-png.flaticon.com/512/1199/1199155.png";
     private final Map<String, Integer> top25Map;
+    private final String loggedInEmail; // ADD THIS
+    private final boolean isAdmin;
 
     public PickSelectionDialog(
             Player player, int slotNumber, String sport, int weekNumber,
             OddsService oddsService, PickService pickService, ConferenceService conferenceService,
             GameSyncService gameSyncService, Runnable onPickSaved
     ) {
+        // --- CAPTURE AUTHENTICATION CONTEXT ---
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof OAuth2User oauth2User) {
+            this.loggedInEmail = oauth2User.getAttribute("email");
+            String loggedInName = oauth2User.getAttribute("name");
+            this.isAdmin = (loggedInName != null && loggedInName.toLowerCase().contains("azich"));
+        } else {
+            this.loggedInEmail = null;
+            this.isAdmin = false;
+        }
         this.pickService = pickService;
         this.top25Map = sport.equals("NCAAF") ? conferenceService.getApTop25(weekNumber) : Map.of();
 
@@ -261,6 +273,7 @@ public class PickSelectionDialog extends Dialog {
             timeRow.add(timeSpan);
 
             // --- AWAY TEAM ROW ---
+            // --- AWAY TEAM ROW ---
             HorizontalLayout awayRow = new HorizontalLayout();
             awayRow.setWidthFull();
             awayRow.setSpacing(false);
@@ -268,14 +281,27 @@ public class PickSelectionDialog extends Dialog {
             awayRow.setAlignItems(FlexComponent.Alignment.CENTER);
 
             Image awayLogo = new Image(awayLogoUrl, awayTeam + " logo");
-            awayLogo.setWidth("20px"); // Was 26px
-            awayLogo.setHeight("20px"); // Was 26px
+            awayLogo.setWidth("20px");
+            awayLogo.setHeight("20px");
             awayLogo.getStyle().set("flex-shrink", "0");
 
+            // 1. Team Name Span (Truncates if too long)
             String awayRank = top25Map.containsKey(awayTeam) ? "#" + top25Map.get(awayTeam) + " " : "";
-            String awayScoreText = (isCompleted && game.getAwayScore() != null) ? " (" + Math.round(game.getAwayScore().doubleValue()) + ")" : "";
-            Span awayName = new Span(awayRank + awayTeam + awayScoreText);
+            Span awayName = new Span(awayRank + awayTeam);
             styleTeamName(awayName);
+
+            // 2. Score Span (Never shrinks, right-aligned)
+            Span awayScoreSpan = new Span();
+            if (isCompleted && game.getAwayScore() != null) {
+                awayScoreSpan.setText(String.valueOf(Math.round(game.getAwayScore().doubleValue())));
+                awayScoreSpan.getStyle()
+                        .set("font-weight", "700")
+                        .set("font-size", "0.95rem")
+                        .set("color", "#f1f5f9")
+                        .set("margin-left", "auto") // Pushes score right
+                        .set("margin-right", "4px")
+                        .set("flex-shrink", "0");
+            }
 
             Button awayBtn = new Button();
             styleOddsButton(awayBtn);
@@ -317,7 +343,7 @@ public class PickSelectionDialog extends Dialog {
                 overBtn.setEnabled(false);
             }
 
-            awayRow.add(awayLogo, awayName, awayBtn, overBtn);
+            awayRow.add(awayLogo, awayName, awayScoreSpan, awayBtn, overBtn);
             awayRow.expand(awayName);
 
             // --- HOME TEAM ROW ---
@@ -329,14 +355,27 @@ public class PickSelectionDialog extends Dialog {
             homeRow.getStyle().set("margin-top", "6px");
 
             Image homeLogo = new Image(homeLogoUrl, homeTeam + " logo");
-            homeLogo.setWidth("20px"); // Was 26px
-            homeLogo.setHeight("20px"); // Was 26px
-            homeRow.getStyle().set("margin-top", "4px"); // Was 6px
+            homeLogo.setWidth("20px");
+            homeLogo.setHeight("20px");
+            homeRow.getStyle().set("margin-top", "4px");
 
+            // 1. Team Name Span (Truncates if too long)
             String homeRank = top25Map.containsKey(homeTeam) ? "#" + top25Map.get(homeTeam) + " " : "";
-            String homeScoreText = (isCompleted && game.getHomeScore() != null) ? " (" + Math.round(game.getHomeScore().doubleValue()) + ")" : "";
-            Span homeName = new Span(homeRank + homeTeam + homeScoreText);
+            Span homeName = new Span(homeRank + homeTeam);
             styleTeamName(homeName);
+
+            // 2. Score Span (Never shrinks, right-aligned)
+            Span homeScoreSpan = new Span();
+            if (isCompleted && game.getHomeScore() != null) {
+                homeScoreSpan.setText(String.valueOf(Math.round(game.getHomeScore().doubleValue())));
+                homeScoreSpan.getStyle()
+                        .set("font-weight", "700")
+                        .set("font-size", "0.95rem")
+                        .set("color", "#f1f5f9")
+                        .set("margin-left", "auto") // Pushes score right
+                        .set("margin-right", "4px")
+                        .set("flex-shrink", "0");
+            }
 
             Button homeBtn = new Button();
             styleOddsButton(homeBtn);
@@ -378,7 +417,7 @@ public class PickSelectionDialog extends Dialog {
                 underBtn.setEnabled(false);
             }
 
-            homeRow.add(homeLogo, homeName, homeBtn, underBtn);
+            homeRow.add(homeLogo, homeName, homeScoreSpan, homeBtn, underBtn);
             homeRow.expand(homeName);
 
             gameCard.add(timeRow, awayRow, homeRow);
@@ -466,33 +505,11 @@ public class PickSelectionDialog extends Dialog {
     }
 
     private boolean canUserEditPlayer(Player targetPlayer) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-
-        // 1. Safely check if the Vaadin WebSocket lost the auth context
-        if (auth == null || !auth.isAuthenticated()) {
-            System.out.println("⚠️ Auth missing or user not authenticated.");
-            return false;
+        if (this.isAdmin) {
+            return true;
         }
-
-        Object principal = auth.getPrincipal();
-
-        if (principal instanceof OAuth2User oauth2User) {
-            String loggedInEmail = oauth2User.getAttribute("email");
-            String loggedInName = oauth2User.getAttribute("name");
-
-            if (loggedInEmail == null) return false;
-
-            // Admin Override
-            boolean isAdmin = (loggedInName != null && loggedInName.toLowerCase().contains("azich"));
-            if (isAdmin) {
-                return true;
-            }
-
-            // Standard User Check
-            if (targetPlayer.getEmail() != null && targetPlayer.getEmail().equalsIgnoreCase(loggedInEmail)) {
-                return true;
-            }
-        }
-        return false;
+        return this.loggedInEmail != null
+                && targetPlayer.getEmail() != null
+                && targetPlayer.getEmail().equalsIgnoreCase(this.loggedInEmail);
     }
 }
