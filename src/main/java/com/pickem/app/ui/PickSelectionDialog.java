@@ -66,25 +66,30 @@ public class PickSelectionDialog extends Dialog {
 
         this.teamDataMap = sport.equals("NCAAF") ? conferenceService.getTeamDataMap() : Map.of();
 
-        // 1. Make conference selector full width
-        ComboBox<String> conferenceFilter = new ComboBox<>();
-        conferenceFilter.setPlaceholder("All Conferences");
-        conferenceFilter.setWidthFull(); // Changed from 170px
-        conferenceFilter.addThemeVariants(ComboBoxVariant.LUMO_SMALL);
-        conferenceFilter.getElement().setAttribute("theme", "dark");
+// 1. Horizontal Scrollable Tabs
+        com.vaadin.flow.component.tabs.Tabs conferenceTabs = new com.vaadin.flow.component.tabs.Tabs();
+        conferenceTabs.setWidthFull();
 
-        // ... (Keep the ComboBox initialization above this) ...
+        java.util.Map<com.vaadin.flow.component.tabs.Tab, String> tabToConferenceMap = new java.util.HashMap<>();
 
         if (sport.equals("NCAAF")) {
             List<String> dynamicConferences = new ArrayList<>();
             dynamicConferences.add("All");
-            dynamicConferences.add("AP Top 25"); // <-- Add it right here!
+            dynamicConferences.add("AP Top 25");
             dynamicConferences.addAll(teamDataMap.values().stream().map(TeamDTO::conference).distinct().sorted().toList());
-            conferenceFilter.setItems(dynamicConferences);
+
+            for (String conf : dynamicConferences) {
+                com.vaadin.flow.component.tabs.Tab tab = new com.vaadin.flow.component.tabs.Tab(conf);
+                tabToConferenceMap.put(tab, conf);
+                conferenceTabs.add(tab);
+            }
         } else {
-            conferenceFilter.setItems("All", "AFC", "NFC");
+            for (String conf : List.of("All", "AFC", "NFC")) {
+                com.vaadin.flow.component.tabs.Tab tab = new com.vaadin.flow.component.tabs.Tab(conf);
+                tabToConferenceMap.put(tab, conf);
+                conferenceTabs.add(tab);
+            }
         }
-        conferenceFilter.setValue("All");
 
         // 2. Search field stays full width
         TextField searchField = new TextField();
@@ -96,15 +101,19 @@ public class PickSelectionDialog extends Dialog {
         searchField.getElement().setAttribute("theme", "dark");
         searchField.setValueChangeMode(ValueChangeMode.LAZY);
 
-        conferenceFilter.addValueChangeListener(event -> {
-            renderGames(event.getValue(), searchField.getValue(), player, slotNumber, sport, weekNumber, onPickSaved);
+        conferenceTabs.addSelectedChangeListener(event -> {
+            String selectedConf = tabToConferenceMap.get(event.getSelectedTab());
+            if (selectedConf != null) {
+                renderGames(selectedConf, searchField.getValue(), player, slotNumber, sport, weekNumber, onPickSaved);
+            }
         });
 
         searchField.addValueChangeListener(event -> {
-            renderGames(conferenceFilter.getValue(), event.getValue(), player, slotNumber, sport, weekNumber, onPickSaved);
+            String selectedConf = tabToConferenceMap.get(conferenceTabs.getSelectedTab());
+            renderGames(selectedConf, event.getValue(), player, slotNumber, sport, weekNumber, onPickSaved);
         });
 
-        VerticalLayout filterBar = new VerticalLayout(conferenceFilter, searchField);
+        VerticalLayout filterBar = new VerticalLayout(conferenceTabs, searchField);
         filterBar.setWidthFull();
         filterBar.setPadding(false);
         filterBar.setSpacing(true);
@@ -210,9 +219,9 @@ public class PickSelectionDialog extends Dialog {
             VerticalLayout gameCard = new VerticalLayout();
             gameCard.getStyle().set("background-color", "#151d30");
             gameCard.getStyle().set("border", isLiveOrFinished ? "1px solid #7f1d1d" : "1px solid #22304d");
-            gameCard.getStyle().set("border-radius", "12px");
-            gameCard.getStyle().set("padding", "10px 12px");
-            gameCard.getStyle().set("margin-bottom", "10px");
+            gameCard.getStyle().set("border-radius", "8px");
+            gameCard.getStyle().set("padding", "6px 8px"); // Was 10px 12px
+            gameCard.getStyle().set("margin-bottom", "6px"); // Was 10px
             gameCard.setSpacing(false);
 
             String matchNameStr = awayTeam + " @ " + homeTeam;
@@ -220,11 +229,11 @@ public class PickSelectionDialog extends Dialog {
             // --- START TIME HEADER ---
             HorizontalLayout timeRow = new HorizontalLayout();
             timeRow.setWidthFull();
-            timeRow.setJustifyContentMode(FlexComponent.JustifyContentMode.CENTER);
-            timeRow.getStyle().set("margin-bottom", "6px");
+            timeRow.setJustifyContentMode(FlexComponent.JustifyContentMode.START); // Left-align the time
+            timeRow.getStyle().set("margin-bottom", "2px");
 
             Span timeSpan = new Span();
-            timeSpan.getStyle().set("font-size", "0.80em");
+            timeSpan.getStyle().set("font-size", "0.70em");
 
             if (isLiveOrFinished) {
                 timeSpan.getStyle().set("color", "#ef4444").set("font-weight", "600");
@@ -259,8 +268,8 @@ public class PickSelectionDialog extends Dialog {
             awayRow.setAlignItems(FlexComponent.Alignment.CENTER);
 
             Image awayLogo = new Image(awayLogoUrl, awayTeam + " logo");
-            awayLogo.setWidth("26px");
-            awayLogo.setHeight("26px");
+            awayLogo.setWidth("20px"); // Was 26px
+            awayLogo.setHeight("20px"); // Was 26px
             awayLogo.getStyle().set("flex-shrink", "0");
 
             String awayRank = top25Map.containsKey(awayTeam) ? "#" + top25Map.get(awayTeam) + " " : "";
@@ -320,9 +329,9 @@ public class PickSelectionDialog extends Dialog {
             homeRow.getStyle().set("margin-top", "6px");
 
             Image homeLogo = new Image(homeLogoUrl, homeTeam + " logo");
-            homeLogo.setWidth("26px");
-            homeLogo.setHeight("26px");
-            homeLogo.getStyle().set("flex-shrink", "0");
+            homeLogo.setWidth("20px"); // Was 26px
+            homeLogo.setHeight("20px"); // Was 26px
+            homeRow.getStyle().set("margin-top", "4px"); // Was 6px
 
             String homeRank = top25Map.containsKey(homeTeam) ? "#" + top25Map.get(homeTeam) + " " : "";
             String homeScoreText = (isCompleted && game.getHomeScore() != null) ? " (" + Math.round(game.getHomeScore().doubleValue()) + ")" : "";
@@ -386,23 +395,23 @@ public class PickSelectionDialog extends Dialog {
                 .set("font-size", "0.85rem")
                 .set("font-weight", "600")
                 .set("color", "#f8fafc")
-                .set("line-height", "1.15")
-                .set("display", "-webkit-box")
-                .set("-webkit-line-clamp", "2")
-                .set("-webkit-box-orient", "vertical")
+                .set("line-height", "1")
+                // Force a single line with an ellipsis
+                .set("white-space", "nowrap")
                 .set("overflow", "hidden")
+                .set("text-overflow", "ellipsis")
                 .set("min-width", "0")
                 .set("margin-right", "4px");
     }
 
     private void styleOddsButton(Button btn) {
-        btn.setWidth("68px");
-        btn.setHeight("36px");
+        btn.setWidth("62px"); // Was 68px
+        btn.setHeight("28px"); // Was 36px
         btn.addThemeVariants(ButtonVariant.LUMO_SMALL);
         btn.addClassName("odds-btn");
         btn.getStyle()
-                .set("padding", "0 2px")
-                .set("font-size", "0.82rem")
+                .set("padding", "0")
+                .set("font-size", "0.75rem") // Slightly smaller text
                 .set("font-weight", "600")
                 .set("letter-spacing", "-0.2px")
                 .set("flex-shrink", "0");
