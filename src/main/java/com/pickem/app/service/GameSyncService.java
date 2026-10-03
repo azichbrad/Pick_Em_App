@@ -27,11 +27,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -59,16 +55,35 @@ public class GameSyncService {
             Map.entry("seattle seahawks", "sea"), Map.entry("tampa bay buccaneers", "tb"),
             Map.entry("tennessee titans", "ten"), Map.entry("washington commanders", "was")
     );
-    private static final Map<String, String> MANUAL_OVERRIDES = Map.of(
-            "albany", "ualbany",
-            "san jose state spartans", "san josé state",
-            "citadel bulldogs", "the citadel",
-            "nicholls state colonels", "nicholls",
-            "southeastern louisiana lions", "southeastern louisiana",
-            "louisiana ragin cajuns", "louisiana",
-            "hawaii rainbow warriors", "hawai'i",
-            "miami fl", "miami"
+    private static final Map<String, String> MANUAL_OVERRIDES = Map.ofEntries(
+            // CFBD Accents & Character Mappings
+            Map.entry("hawaii", "hawai'i"),
+            Map.entry("hawaii rainbow warriors", "hawai'i"),
+            Map.entry("san jose state", "san josé state"),
+            Map.entry("san jose state spartans", "san josé state"),
+            Map.entry("miami florida", "miami"),
+            Map.entry("miami fl", "miami"),
+            Map.entry("miami ohio", "miami (oh)"),
+            Map.entry("miami (ohio)", "miami (oh)"),
+            Map.entry("louisiana monroe", "louisiana-monroe"),
+            Map.entry("ul monroe", "louisiana-monroe"),
+            Map.entry("louisiana lafayette", "louisiana"),
+            Map.entry("louisiana ragin cajuns", "louisiana"),
+            Map.entry("appalachian state", "app state"),
+            Map.entry("albany", "ualbany"),
+            Map.entry("citadel bulldogs", "the citadel"),
+            Map.entry("nicholls state colonels", "nicholls"),
+            Map.entry("southeastern louisiana lions", "southeastern louisiana")
     );
+
+    private static final Map<String, String> DIRECT_LOGO_FALLBACKS = Map.of(
+            "texas southern", "https://a.espncdn.com/i/teamlogos/ncaa/500/2640.png",
+            "mcneese", "https://a.espncdn.com/i/teamlogos/ncaa/500/2377.png",
+            "tarleton state", "https://a.espncdn.com/i/teamlogos/ncaa/500/2607.png",
+            "central arkansas", "https://a.espncdn.com/i/teamlogos/ncaa/500/2110.png",
+            "ul monroe", "https://a.espncdn.com/i/teamlogos/ncaa/500/2433.png" // The Final Boss
+    );
+
     private final PickRepository pickRepo;
     private final PlayerRecordRepository playerRecordRepo;
     private final OddsHistoryRepository oddsHistoryRepo;
@@ -84,10 +99,9 @@ public class GameSyncService {
         this.playerRepo = playerRepo;
         this.playerRecordRepo = playerRecordRepo;
         this.oddsHistoryRepo = oddsHistoryRepo;
-        // Apply 10-second timeouts to prevent hanging threads
         this.restTemplate = restTemplateBuilder
                 .setConnectTimeout(Duration.ofSeconds(10))
-                .setReadTimeout(Duration.ofSeconds(10))
+                .setReadTimeout(Duration.ofSeconds(30))
                 .build();
     }
 
@@ -208,7 +222,8 @@ public class GameSyncService {
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(cfbdApiKey);
             HttpEntity<String> entity = new HttpEntity<>(headers);
-            String cfbdUrl = "https://api.collegefootballdata.com/teams";
+            // Inside fetchAndCacheLogos()
+            String cfbdUrl = "https://api.collegefootballdata.com/teams/fbs?year=2026";
 
             // Uses the configured RestTemplate with timeouts instead of an infinite new RestTemplate()
             ResponseEntity<JsonNode> response = restTemplate.exchange(
@@ -240,8 +255,13 @@ public class GameSyncService {
                 .collect(Collectors.groupingBy(GameOddsDTO::eventId));
 
         List<String> eventIds = new ArrayList<>(oddsByGame.keySet());
+
+        // 1. Fetch games by ID
         Map<String, Game> existingGamesMap = gameRepo.findAllById(eventIds).stream()
                 .collect(Collectors.toMap(Game::getId, g -> g));
+
+        // 2. Fetch ALL games as fallback to match changed event IDs
+        List<Game> allDbGames = gameRepo.findAll();
 
         Map<String, Game> gamesToSaveMap = new HashMap<>();
         List<OddsHistory> historyToSaveList = new ArrayList<>();
@@ -249,20 +269,24 @@ public class GameSyncService {
         for (Map.Entry<String, List<GameOddsDTO>> entry : oddsByGame.entrySet()) {
             String eventId = entry.getKey();
             List<GameOddsDTO> gameOdds = entry.getValue();
-
             GameOddsDTO baseInfo = gameOdds.get(0);
 
-            // 1. Check if we are already processing it in this current batch
+            // 1. Check if we already processed it in this current batch
             Game game = gamesToSaveMap.get(eventId);
 
-            // 2. Check the pre-loaded memory map
+            // 2. Check pre-loaded memory map by ID
             if (game == null) {
                 game = existingGamesMap.get(eventId);
             }
 
-            // 3. BULLETPROOF FALLBACK: Query the database directly before creating a new one
+            // 3. Fallback: Check DB by teams and sport
             if (game == null) {
-                game = gameRepo.findById(eventId).orElse(new Game());
+                game = allDbGames.stream()
+                        .filter(g -> sport.equalsIgnoreCase(g.getSport()) &&
+                                baseInfo.homeTeam().equalsIgnoreCase(g.getHomeTeam()) &&
+                                baseInfo.awayTeam().equalsIgnoreCase(g.getAwayTeam()))
+                        .findFirst()
+                        .orElse(new Game());
             }
 
             if (game.getCommenceTime() != null && game.getCommenceTime().isBefore(Instant.now())) {
@@ -270,7 +294,6 @@ public class GameSyncService {
                 continue;
             }
 
-            // Track previous lines to prevent OddsHistory spam
             Double previousAwaySpread = game.getAwaySpread();
             Double previousHomeSpread = game.getHomeSpread();
             Double previousTotal = game.getOverTotal();
@@ -290,15 +313,13 @@ public class GameSyncService {
                 String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam().trim().toLowerCase() : "";
                 String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam().trim().toLowerCase() : "";
 
-                // Case-insensitive fuzzy matching so SharpAPI data doesn't get dropped
                 if ("point_spread".equalsIgnoreCase(odd.marketType())) {
                     if (selection.equalsIgnoreCase(awayTeam) || awayTeam.contains(selection) || selection.contains(awayTeam)) {
                         game.setAwaySpread(odd.line());
                     } else if (selection.equalsIgnoreCase(homeTeam) || homeTeam.contains(selection) || selection.contains(homeTeam)) {
                         game.setHomeSpread(odd.line());
                     }
-                }
-                else if ("total_points".equalsIgnoreCase(odd.marketType())) {
+                } else if ("total_points".equalsIgnoreCase(odd.marketType())) {
                     if ("over".equalsIgnoreCase(selection)) {
                         game.setOverTotal(odd.line());
                     } else if ("under".equalsIgnoreCase(selection)) {
@@ -309,7 +330,6 @@ public class GameSyncService {
 
             gamesToSaveMap.put(game.getId(), game);
 
-            // Only insert into OddsHistory if the lines actually moved since the last poll
             boolean linesChanged = !Objects.equals(previousAwaySpread, game.getAwaySpread()) ||
                     !Objects.equals(previousHomeSpread, game.getHomeSpread()) ||
                     !Objects.equals(previousTotal, game.getOverTotal());
@@ -365,18 +385,24 @@ public class GameSyncService {
 
         String cleanName = oddsApiTeamName.trim().toLowerCase();
 
+        // 1. NFL Logos
         if ("NFL".equalsIgnoreCase(sport)) {
             if (cleanName.equals("arizona") || cleanName.equals("az cardinals") || cleanName.equals("ari cardinals")) {
                 return "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png";
             }
-
             if (NFL_ABBREVIATIONS.containsKey(cleanName)) {
                 return "https://a.espncdn.com/i/teamlogos/nfl/500/" + NFL_ABBREVIATIONS.get(cleanName) + ".png";
             }
         }
 
-        cleanName = MANUAL_OVERRIDES.getOrDefault(cleanName, cleanName);
-        String url = logoCache.get(cleanName);
+        // 2. Direct FCS Fallbacks (Returns immediately!)
+        if (DIRECT_LOGO_FALLBACKS != null && DIRECT_LOGO_FALLBACKS.containsKey(cleanName)) {
+            return DIRECT_LOGO_FALLBACKS.get(cleanName);
+        }
+
+        // 3. Check CFBD cache with name mapping
+        String mappedName = MANUAL_OVERRIDES.getOrDefault(cleanName, cleanName);
+        String url = logoCache.get(mappedName);
 
         if (url == null) {
             System.out.println("❌ CACHE MISS: Odds API handed us -> '" + oddsApiTeamName + "' for sport: " + sport);
