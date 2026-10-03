@@ -161,8 +161,49 @@ public class BoardView extends VerticalLayout {
         long startTime = System.currentTimeMillis();
         boardGrid.removeAll();
 
-        List<PlayerRecord> overallRecords = playerRecordRepo.findBySportAndWeekNumber(sport, 99);
-        overallRecords.sort((a, b) -> Integer.compare(b.getWins(), a.getWins()));
+        // 1. Fetch all players to ensure everyone appears on the leaderboard, even with 0 picks
+        List<Player> allPlayers = playerRepo.findAll();
+
+        // 2. Fetch all weekly records, excluding any legacy week 99 totals
+        List<PlayerRecord> allWeeklyRecords = playerRecordRepo.findBySport(sport).stream()
+                .filter(r -> r.getWeekNumber() != null && r.getWeekNumber() < 90)
+                .toList();
+
+        // 3. Initialize the aggregation map with 0s for every player ID
+        java.util.Map<Long, int[]> aggregatedMap = new java.util.HashMap<>();
+        for (Player p : allPlayers) {
+            aggregatedMap.put(p.getId(), new int[3]);
+        }
+
+        // 4. Sum up all wins, losses, and pushes
+        for (PlayerRecord rec : allWeeklyRecords) {
+            if (rec.getPlayer() != null && aggregatedMap.containsKey(rec.getPlayer().getId())) {
+                int[] stats = aggregatedMap.get(rec.getPlayer().getId());
+                stats[0] += rec.getWins();
+                stats[1] += rec.getLosses();
+                stats[2] += rec.getPushes();
+            }
+        }
+
+        java.util.Map<Long, Player> playerMap = allPlayers.stream()
+                .collect(java.util.stream.Collectors.toMap(Player::getId, p -> p));
+
+        // 5. Construct the final leaderboard list and sort by Wins desc, then Losses asc
+        List<PlayerRecord> overallRecords = aggregatedMap.entrySet().stream()
+                .map(entry -> {
+                    PlayerRecord total = new PlayerRecord(playerMap.get(entry.getKey()), sport, 99);
+                    total.setWins(entry.getValue()[0]);
+                    total.setLosses(entry.getValue()[1]);
+                    total.setPushes(entry.getValue()[2]);
+                    return total;
+                })
+                .sorted((a, b) -> {
+                    if (b.getWins() != a.getWins()) {
+                        return Integer.compare(b.getWins(), a.getWins());
+                    }
+                    return Integer.compare(a.getLosses(), b.getLosses());
+                })
+                .toList();
 
         List<PlayerRecord> weeklyRecords = playerRecordRepo.findBySportAndWeekNumber(sport, selectedWeek);
         java.util.Map<Long, PlayerRecord> weeklyRecordMap = weeklyRecords.stream()
@@ -190,7 +231,6 @@ public class BoardView extends VerticalLayout {
                 .set("padding-bottom", "8px")
                 .set("-webkit-overflow-scrolling", "touch")
                 .set("align-items", "baseline")
-                // ADD THESE TWO LINES:
                 .set("flex-shrink", "0")
                 .set("min-height", "45px");
         leaderboardBar.setAlignItems(Alignment.CENTER);
@@ -234,7 +274,7 @@ public class BoardView extends VerticalLayout {
             String p1Name = p1.getName().toLowerCase();
             String p2Name = p2.getName().toLowerCase();
 
-            // Fuzzy match: Does "Bradley Azich" contain "Brad"?
+            // Fuzzy match
             boolean isP1Current = !loggedInUserLower.isEmpty() && (loggedInUserLower.contains(p1Name) || p1Name.contains(loggedInUserLower));
             boolean isP2Current = !loggedInUserLower.isEmpty() && (loggedInUserLower.contains(p2Name) || p2Name.contains(loggedInUserLower));
 
