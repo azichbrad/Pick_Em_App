@@ -161,7 +161,7 @@ public class BoardView extends VerticalLayout {
         long startTime = System.currentTimeMillis();
         boardGrid.removeAll();
 
-        List<PlayerRecord> overallRecords = playerRecordRepo.findBySportAndWeekNumber(sport, 0);
+        List<PlayerRecord> overallRecords = playerRecordRepo.findBySportAndWeekNumber(sport, 99);
         overallRecords.sort((a, b) -> Integer.compare(b.getWins(), a.getWins()));
 
         List<PlayerRecord> weeklyRecords = playerRecordRepo.findBySportAndWeekNumber(sport, selectedWeek);
