@@ -179,7 +179,7 @@ public class BoardView extends VerticalLayout {
         java.util.Map<String, com.pickem.app.model.Game> gamesMap = weeklyGames == null ? java.util.Map.of() :
                 weeklyGames.stream().collect(java.util.stream.Collectors.toMap(com.pickem.app.model.Game::getId, g -> g));
 
-        java.time.Instant liveCutoff = java.time.Instant.now().minus(java.time.Duration.ofMinutes(15));
+        java.time.Instant liveCutoff = java.time.Instant.now();
 
         HorizontalLayout leaderboardBar = new HorizontalLayout();
         leaderboardBar.setWidthFull();

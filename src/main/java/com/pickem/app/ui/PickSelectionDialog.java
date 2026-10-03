@@ -43,10 +43,7 @@ public class PickSelectionDialog extends Dialog {
     private final Map<String, String> localConferenceCache = new HashMap<>();
     private final PickService pickService;
     private static final String TOTALS_ICON = "https://cdn-icons-png.flaticon.com/512/1199/1199155.png";
-
-    private final DateTimeFormatter timeFormatter = DateTimeFormatter
-            .ofPattern("EEE, MMM d • h:mm a")
-            .withZone(ZoneId.of("America/Los_Angeles"));
+    private final Map<String, Integer> top25Map;
 
     public PickSelectionDialog(
             Player player, int slotNumber, String sport, int weekNumber,
@@ -54,6 +51,7 @@ public class PickSelectionDialog extends Dialog {
             GameSyncService gameSyncService, Runnable onPickSaved
     ) {
         this.pickService = pickService;
+        this.top25Map = sport.equals("NCAAF") ? conferenceService.getApTop25(weekNumber) : Map.of();
 
         List<Game> fetchedGames = gameSyncService.getGamesForSportAndWeekFromDb(sport, weekNumber);
         this.games = fetchedGames != null ? fetchedGames : List.of();
@@ -75,9 +73,12 @@ public class PickSelectionDialog extends Dialog {
         conferenceFilter.addThemeVariants(ComboBoxVariant.LUMO_SMALL);
         conferenceFilter.getElement().setAttribute("theme", "dark");
 
+        // ... (Keep the ComboBox initialization above this) ...
+
         if (sport.equals("NCAAF")) {
             List<String> dynamicConferences = new ArrayList<>();
             dynamicConferences.add("All");
+            dynamicConferences.add("AP Top 25"); // <-- Add it right here!
             dynamicConferences.addAll(teamDataMap.values().stream().map(TeamDTO::conference).distinct().sorted().toList());
             conferenceFilter.setItems(dynamicConferences);
         } else {
@@ -143,11 +144,11 @@ public class PickSelectionDialog extends Dialog {
         }
 
         String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase();
-        int matchedCount = 0;
-
-        Instant liveCutoff = Instant.now().minus(Duration.ofMinutes(15));
+        Instant liveCutoff = Instant.now();
         Set<String> burnedSet = pickService.getBurnedSelectionKeys(player.getId(), sport, weekNumber);
 
+        // 1. FILTER THE GAMES
+        List<Game> filteredGames = new ArrayList<>();
         for (Game game : games) {
             String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam() : "";
             String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam() : "";
@@ -158,16 +159,42 @@ public class PickSelectionDialog extends Dialog {
             if (!matchesSearch) continue;
 
             if (selectedConference != null && !selectedConference.equals("All") && sport.equals("NCAAF")) {
-                String homeConf = getConference(homeTeam);
-                String awayConf = getConference(awayTeam);
+                if (selectedConference.equals("AP Top 25")) {
+                    if (!top25Map.containsKey(awayTeam) && !top25Map.containsKey(homeTeam)) {
+                        continue;
+                    }
+                } else {
+                    String homeConf = getConference(homeTeam);
+                    String awayConf = getConference(awayTeam);
 
-                if (!selectedConference.equals(homeConf) && !selectedConference.equals(awayConf)) {
-                    continue;
+                    if (!selectedConference.equals(homeConf) && !selectedConference.equals(awayConf)) {
+                        continue;
+                    }
                 }
             }
+            filteredGames.add(game);
+        }
+
+        // 2. SORT THE GAMES BY RANK (if AP Top 25 is selected)
+        if ("AP Top 25".equals(selectedConference)) {
+            filteredGames.sort((g1, g2) -> {
+                int rank1 = Math.min(top25Map.getOrDefault(g1.getAwayTeam(), 99), top25Map.getOrDefault(g1.getHomeTeam(), 99));
+                int rank2 = Math.min(top25Map.getOrDefault(g2.getAwayTeam(), 99), top25Map.getOrDefault(g2.getHomeTeam(), 99));
+                return Integer.compare(rank1, rank2);
+            });
+        }
+
+        int matchedCount = 0;
+
+        // 3. RENDER THE UI
+        for (Game game : filteredGames) {
+            String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam() : "";
+            String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam() : "";
 
             boolean isLiveOrFinished = game.getCommenceTime() != null &&
                     game.getCommenceTime().isBefore(liveCutoff);
+
+            boolean isCompleted = Boolean.TRUE.equals(game.getCompleted());
 
             matchedCount++;
 
@@ -196,8 +223,7 @@ public class PickSelectionDialog extends Dialog {
             timeRow.setJustifyContentMode(FlexComponent.JustifyContentMode.CENTER);
             timeRow.getStyle().set("margin-bottom", "6px");
 
-            String timeString = game.getCommenceTime() != null ? timeFormatter.format(game.getCommenceTime()) + " PT" : "TBD";
-            Span timeSpan = new Span(isLiveOrFinished ? timeString + " • IN PROGRESS" : timeString);
+            Span timeSpan = new Span();
             timeSpan.getStyle().set("font-size", "0.80em");
 
             if (isLiveOrFinished) {
@@ -205,6 +231,24 @@ public class PickSelectionDialog extends Dialog {
             } else {
                 timeSpan.getStyle().set("color", "#94a3b8");
             }
+
+            if (game.getCommenceTime() != null) {
+                long epochMillis = game.getCommenceTime().toEpochMilli();
+                String js = "const d = new Date($0);" +
+                        "let text = d.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric'}) + ' • ' + " +
+                        "d.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit', timeZoneName: 'short'});" +
+                        "if ($1 && !$2) text += ' • IN PROGRESS';" +
+                        "if ($2) text += ' • FINAL';" +
+                        "this.textContent = text;";
+
+                timeSpan.getElement().executeJs(js, (double) epochMillis, isLiveOrFinished, isCompleted);
+            } else {
+                String fallback = "TBD";
+                if (isCompleted) fallback += " • FINAL";
+                else if (isLiveOrFinished) fallback += " • IN PROGRESS";
+                timeSpan.setText(fallback);
+            }
+
             timeRow.add(timeSpan);
 
             // --- AWAY TEAM ROW ---
@@ -219,7 +263,9 @@ public class PickSelectionDialog extends Dialog {
             awayLogo.setHeight("26px");
             awayLogo.getStyle().set("flex-shrink", "0");
 
-            Span awayName = new Span(awayTeam);
+            String awayRank = top25Map.containsKey(awayTeam) ? "#" + top25Map.get(awayTeam) + " " : "";
+            String awayScoreText = (isCompleted && game.getAwayScore() != null) ? " (" + Math.round(game.getAwayScore().doubleValue()) + ")" : "";
+            Span awayName = new Span(awayRank + awayTeam + awayScoreText);
             styleTeamName(awayName);
 
             Button awayBtn = new Button();
@@ -229,10 +275,10 @@ public class PickSelectionDialog extends Dialog {
                 awayBtn.setEnabled(false);
             } else if (awayPoint != null) {
                 String pointStr = awayPoint > 0 ? "+" + awayPoint : String.valueOf(awayPoint);
-                awayBtn.setText(pointStr); // Always show the odds
+                awayBtn.setText(pointStr);
 
                 if (burnedSet.contains(game.getId() + "_spread_" + awayTeam)) {
-                    awayBtn.setEnabled(false); // Dim and disable if burned
+                    awayBtn.setEnabled(false);
                 } else {
                     String selectionStr = awayTeam + " " + pointStr;
                     awayBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, awayLogoUrl, game.getId(), awayPoint, matchNameStr, "spread", awayTeam, onPickSaved));
@@ -278,7 +324,9 @@ public class PickSelectionDialog extends Dialog {
             homeLogo.setHeight("26px");
             homeLogo.getStyle().set("flex-shrink", "0");
 
-            Span homeName = new Span(homeTeam);
+            String homeRank = top25Map.containsKey(homeTeam) ? "#" + top25Map.get(homeTeam) + " " : "";
+            String homeScoreText = (isCompleted && game.getHomeScore() != null) ? " (" + Math.round(game.getHomeScore().doubleValue()) + ")" : "";
+            Span homeName = new Span(homeRank + homeTeam + homeScoreText);
             styleTeamName(homeName);
 
             Button homeBtn = new Button();

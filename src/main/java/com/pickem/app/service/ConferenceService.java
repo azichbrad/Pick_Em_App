@@ -22,6 +22,7 @@ public class ConferenceService {
     private String apiKey;
 
     private final RestTemplate restTemplate = new RestTemplate();
+    private final Map<Integer, Map<String, Integer>> weeklyTop25Cache = new HashMap<>();
 
     // Now maps the School Name to the entire TeamDTO object
     @Cacheable("teams")
@@ -43,5 +44,40 @@ public class ConferenceService {
             }
         }
         return teamMap;
+    }
+
+    public Map<String, Integer> getApTop25(int week) {
+        // Return from cache if we already fetched it this week
+        if (weeklyTop25Cache.containsKey(week)) {
+            return weeklyTop25Cache.get(week);
+        }
+
+        Map<String, Integer> top25 = new HashMap<>();
+        try {
+            org.springframework.web.client.RestTemplate restTemplate = new org.springframework.web.client.RestTemplate();
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            System.out.println("CFBD Key Present: " + (System.getenv("CFBD_API_KEY") != null));
+            headers.set("Authorization", "Bearer " + this.apiKey);
+            org.springframework.http.HttpEntity<String> entity = new org.springframework.http.HttpEntity<>(headers);
+
+            String url = "https://api.collegefootballdata.com/rankings?year=2026&week=" + week + "&seasonType=regular";
+            org.springframework.http.ResponseEntity<com.fasterxml.jackson.databind.JsonNode[]> response =
+                    restTemplate.exchange(url, org.springframework.http.HttpMethod.GET, entity, com.fasterxml.jackson.databind.JsonNode[].class);
+
+            if (response.getBody() != null && response.getBody().length > 0) {
+                com.fasterxml.jackson.databind.JsonNode polls = response.getBody()[0].get("polls");
+                for (com.fasterxml.jackson.databind.JsonNode poll : polls) {
+                    if ("AP Top 25".equals(poll.get("poll").asText())) {
+                        for (com.fasterxml.jackson.databind.JsonNode rankNode : poll.get("ranks")) {
+                            top25.put(rankNode.get("school").asText(), rankNode.get("rank").asInt());
+                        }
+                    }
+                }
+            }
+            weeklyTop25Cache.put(week, top25);
+        } catch (Exception e) {
+            System.err.println("Failed to fetch AP Top 25: " + e.getMessage());
+        }
+        return top25;
     }
 }
