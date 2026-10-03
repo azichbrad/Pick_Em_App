@@ -47,16 +47,29 @@ public class ConferenceService {
     }
 
     public Map<String, Integer> getApTop25(int week) {
-        // Return from cache if we already fetched it this week
-        if (weeklyTop25Cache.containsKey(week)) {
+        // Return from cache if we already have non-empty rankings for this week
+        if (weeklyTop25Cache.containsKey(week) && !weeklyTop25Cache.get(week).isEmpty()) {
             return weeklyTop25Cache.get(week);
         }
 
+        Map<String, Integer> top25 = fetchRankingsFromCfbd(week);
+
+        // If next week's poll hasn't dropped yet (empty), fall back to the previous week's rankings!
+        if (top25.isEmpty() && week > 0) {
+            top25 = fetchRankingsFromCfbd(week - 1);
+        } else if (!top25.isEmpty()) {
+            // Only cache if we actually got rankings (so it re-checks once Sunday's poll drops)
+            weeklyTop25Cache.put(week, top25);
+        }
+
+        return top25;
+    }
+
+    private Map<String, Integer> fetchRankingsFromCfbd(int week) {
         Map<String, Integer> top25 = new HashMap<>();
         try {
             org.springframework.web.client.RestTemplate restTemplate = new org.springframework.web.client.RestTemplate();
             org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-            System.out.println("CFBD Key Present: " + (System.getenv("CFBD_API_KEY") != null));
             headers.set("Authorization", "Bearer " + this.apiKey);
             org.springframework.http.HttpEntity<String> entity = new org.springframework.http.HttpEntity<>(headers);
 
@@ -66,17 +79,18 @@ public class ConferenceService {
 
             if (response.getBody() != null && response.getBody().length > 0) {
                 com.fasterxml.jackson.databind.JsonNode polls = response.getBody()[0].get("polls");
-                for (com.fasterxml.jackson.databind.JsonNode poll : polls) {
-                    if ("AP Top 25".equals(poll.get("poll").asText())) {
-                        for (com.fasterxml.jackson.databind.JsonNode rankNode : poll.get("ranks")) {
-                            top25.put(rankNode.get("school").asText(), rankNode.get("rank").asInt());
+                if (polls != null) {
+                    for (com.fasterxml.jackson.databind.JsonNode poll : polls) {
+                        if ("AP Top 25".equals(poll.get("poll").asText())) {
+                            for (com.fasterxml.jackson.databind.JsonNode rankNode : poll.get("ranks")) {
+                                top25.put(rankNode.get("school").asText(), rankNode.get("rank").asInt());
+                            }
                         }
                     }
                 }
             }
-            weeklyTop25Cache.put(week, top25);
         } catch (Exception e) {
-            System.err.println("Failed to fetch AP Top 25: " + e.getMessage());
+            System.err.println("Failed to fetch AP Top 25 for week " + week + ": " + e.getMessage());
         }
         return top25;
     }
