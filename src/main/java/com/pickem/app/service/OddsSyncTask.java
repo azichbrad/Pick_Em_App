@@ -12,14 +12,17 @@ public class OddsSyncTask {
         this.gameSyncService = gameSyncService;
     }
 
-    // Now safely runs every 30 minutes in the background
-    @Scheduled(initialDelay = 5000, fixedDelay = 1800000)
-    public void syncOddsToDatabase() {
-        System.out.println("Starting odds sync trigger...");
-
-        // Let the perfected logic in GameSyncService handle the heavy lifting!
+    // Weekend slate: runs every 15 minutes on Saturday and Sunday
+    @Scheduled(cron = "0 0/15 * * * SAT,SUN", zone = "America/Los_Angeles")
+    public void weekendOddsSync() {
+        System.out.println("🏈 Running Weekend Odds Sync...");
         gameSyncService.syncAllOdds();
+    }
 
-        System.out.println("Odds sync trigger completed.");
+    // Weekdays: runs once every 2 hours to conserve SharpAPI quotas
+    @Scheduled(cron = "0 0 0/2 * * MON-FRI", zone = "America/Los_Angeles")
+    public void weekdayOddsSync() {
+        System.out.println("📅 Running Weekday Odds Sync...");
+        gameSyncService.syncAllOdds();
     }
 }

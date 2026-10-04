@@ -42,13 +42,11 @@ public class OddsService {
             .registerModule(new JavaTimeModule())
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    @Cacheable("ncaafOdds")
     public List<GameOddsDTO> getCollegeFootballOdds() {
         String url = "https://api.sharpapi.io/api/v1/odds?sport=football&league=NCAAF&sportsbook=fanduel&limit=200&market=moneyline,point_spread,total_points";
         return parseSharpApiResponse(fetchAllSharpApiOdds(url));
     }
 
-    @Cacheable("nflOdds")
     public List<GameOddsDTO> getNflOdds() {
         String url = "https://api.sharpapi.io/api/v1/odds?sport=football&league=NFL&sportsbook=fanduel&limit=200&market=moneyline,point_spread,total_points";
         return parseSharpApiResponse(fetchAllSharpApiOdds(url));

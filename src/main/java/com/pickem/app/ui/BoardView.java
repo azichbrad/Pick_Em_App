@@ -96,11 +96,11 @@ public class BoardView extends VerticalLayout {
         String[] currentTab = { "NCAAF" };
 
         Runnable updateParlayBtnState = () -> {
+            // CFB Week 6 aligns with NFL Week 5 (NFL Week + 1 = CFB Master Week)
             int masterWeek = currentTab[0].equals("NCAAF") ? currentWeeks[0] : (currentWeeks[1] + 1);
             int lockedCount = parlayService.getLockedPickCount(masterWeek);
             String slateLabel = getSlateSundayForWeek(masterWeek);
 
-            // 4. Drop the word "Parlay" to save pixels on mobile (e.g. "Oct 4 (0/5)")
             if (lockedCount >= 5) {
                 groupParlayBtn.setText(slateLabel + " (Ready)");
                 groupParlayBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_SUCCESS, com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
@@ -529,8 +529,8 @@ public class BoardView extends VerticalLayout {
     }
 
     private String getSlateSundayForWeek(int ncaafWeek) {
-        // Week 0 in NCAAF was Sunday, Aug 30, 2026
-        java.time.ZonedDateTime week0Sunday = java.time.ZonedDateTime.of(2026, 8, 30, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
+        // CFB Week 0 Sunday was Aug 23, 2026
+        java.time.ZonedDateTime week0Sunday = java.time.ZonedDateTime.of(2026, 8, 23, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
         return week0Sunday.plusWeeks(ncaafWeek).format(java.time.format.DateTimeFormatter.ofPattern("MMM d"));
     }
 

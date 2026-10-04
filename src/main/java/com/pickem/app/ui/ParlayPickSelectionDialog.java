@@ -119,7 +119,11 @@ public class ParlayPickSelectionDialog extends Dialog {
     private void loadGamesForSport() {
         this.top25Map = currentSport.equals("NCAAF") ? conferenceService.getApTop25(weekNumber) : Map.of();
         this.teamDataMap = currentSport.equals("NCAAF") ? conferenceService.getTeamDataMap() : Map.of();
-        List<Game> fetchedGames = gameSyncService.getGamesForSportAndWeekFromDb(currentSport, weekNumber);
+
+        // Convert the unified master week back down to the native NFL schedule week
+        int scheduleWeek = currentSport.equals("NCAAF") ? weekNumber : (weekNumber - 1);
+
+        List<Game> fetchedGames = gameSyncService.getGamesForSportAndWeekFromDb(currentSport, scheduleWeek);
         this.currentGames = fetchedGames != null ? fetchedGames : new ArrayList<>();
     }
 
