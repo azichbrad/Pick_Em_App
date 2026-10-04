@@ -24,7 +24,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.IntStream;
 
 @Route("board")
@@ -38,20 +37,20 @@ public class BoardView extends VerticalLayout {
     private final ConferenceService conferenceService;
     private final GameSyncService gameSyncService;
     private final PlayerRecordRepository playerRecordRepo;
-    private final PickRepository pickRepository;
     private final PickService pickService;
+    private final ParlayService parlayService;
 
     public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService,
                      ConferenceService conferenceService,
                      GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo, PlayerRecordRepository playerRecordRepo1,
-                     PickRepository pickRepository, PickService pickService) {
+                     PickRepository pickRepository, PickService pickService, ParlayService parlayService) {
         this.playerRepo = playerRepo;
         this.pickRepo = pickRepo;
         this.oddsService = oddsService;
         this.conferenceService = conferenceService;
         this.gameSyncService = gameSyncService;
         this.playerRecordRepo = playerRecordRepo1;
-        this.pickRepository = pickRepository;
+        this.parlayService = parlayService;
         this.pickService = pickService;
 
         getElement().setAttribute("theme", Lumo.DARK);
@@ -87,13 +86,64 @@ public class BoardView extends VerticalLayout {
         nflTabLabel.setAlignItems(Alignment.CENTER);
         nflTabLabel.setSpacing(false);
 
-        tabSheet.add(collegeTabLabel, createTabContent("NCAAF"));
-        tabSheet.add(nflTabLabel, createTabContent("NFL"));
+        Button groupParlayBtn = new Button();
+        groupParlayBtn.getStyle()
+                .set("position", "absolute")
+                .set("top", "16px")
+                .set("right", "16px")
+                .set("z-index", "10");
 
-        add(tabSheet);
+        // State trackers for the currently viewed data
+        int[] currentWeeks = { calculateCurrentWeek("NCAAF"), calculateCurrentWeek("NFL") };
+        String[] currentTab = { "NCAAF" };
+
+        Runnable updateParlayBtnState = () -> {
+            // Normalize the week (NFL Week 1 == NCAAF Week 2)
+            int masterWeek = currentTab[0].equals("NCAAF") ? currentWeeks[0] : (currentWeeks[1] + 1);
+            int lockedCount = parlayService.getLockedPickCount(masterWeek);
+            String slateLabel = getSlateSundayForWeek(masterWeek);
+
+            if (lockedCount >= 5) {
+                groupParlayBtn.setText(slateLabel + " Parlay (Ready)");
+                groupParlayBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_SUCCESS, com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
+            } else {
+                groupParlayBtn.setText(slateLabel + " Parlay (" + lockedCount + "/5)");
+                groupParlayBtn.removeThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_SUCCESS);
+                groupParlayBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
+            }
+        };
+
+        groupParlayBtn.addClickListener(e -> {
+            int masterWeek = currentTab[0].equals("NCAAF") ? currentWeeks[0] : (currentWeeks[1] + 1);
+            GroupParlayDialog dialog = new GroupParlayDialog(
+                    masterWeek, parlayService, playerRepo, oddsService,
+                    conferenceService, gameSyncService, updateParlayBtnState
+            );
+            dialog.open();
+        });
+
+        // Register the tabs and pass in a callback to update state when the dropdown changes
+        com.vaadin.flow.component.tabs.Tab cfbTab = tabSheet.add(collegeTabLabel, createTabContent("NCAAF", week -> {
+            currentWeeks[0] = week;
+            if (currentTab[0].equals("NCAAF")) updateParlayBtnState.run();
+        }));
+
+        com.vaadin.flow.component.tabs.Tab nflTab = tabSheet.add(nflTabLabel, createTabContent("NFL", week -> {
+            currentWeeks[1] = week;
+            if (currentTab[0].equals("NFL")) updateParlayBtnState.run();
+        }));
+
+        // Update the button instantly when the user clicks a different tab header
+        tabSheet.addSelectedChangeListener(event -> {
+            currentTab[0] = event.getSelectedTab().equals(cfbTab) ? "NCAAF" : "NFL";
+            updateParlayBtnState.run();
+        });
+
+        updateParlayBtnState.run();
+        add(groupParlayBtn, tabSheet);
     }
 
-    private VerticalLayout createTabContent(String sport) {
+    private VerticalLayout createTabContent(String sport, java.util.function.Consumer<Integer> onWeekChanged) {
         VerticalLayout container = new VerticalLayout();
         container.setSizeFull();
         container.setPadding(false);
@@ -150,6 +200,9 @@ public class BoardView extends VerticalLayout {
                 prevButton.setEnabled(val > minWeek);
                 nextButton.setEnabled(val < maxWeek);
                 renderPlayerColumns(boardGrid, sport, val);
+
+                // Fire the callback to update the global parlay button
+                onWeekChanged.accept(val);
             }
         });
 
@@ -161,7 +214,7 @@ public class BoardView extends VerticalLayout {
         long startTime = System.currentTimeMillis();
         boardGrid.removeAll();
 
-        // 1. Fetch all players to ensure everyone appears on the leaderboard, even with 0 picks
+        // 1. Fetch all players to ensure everyone appears on the leaderboard
         List<Player> allPlayers = playerRepo.findAll();
 
         // 2. Fetch all weekly records, excluding any legacy week 99 totals
@@ -175,7 +228,7 @@ public class BoardView extends VerticalLayout {
             aggregatedMap.put(p.getId(), new int[3]);
         }
 
-        // 4. Sum up all wins, losses, and pushes
+        // 4. Sum up all wins, losses, and pushes from the PlayerRecord ledger
         for (PlayerRecord rec : allWeeklyRecords) {
             if (rec.getPlayer() != null && aggregatedMap.containsKey(rec.getPlayer().getId())) {
                 int[] stats = aggregatedMap.get(rec.getPlayer().getId());
@@ -222,6 +275,7 @@ public class BoardView extends VerticalLayout {
 
         java.time.Instant liveCutoff = java.time.Instant.now();
 
+        // ... (Keep the rest of the UI rendering exactly the same from here down)
         HorizontalLayout leaderboardBar = new HorizontalLayout();
         leaderboardBar.setWidthFull();
         leaderboardBar.getStyle()
@@ -473,6 +527,12 @@ public class BoardView extends VerticalLayout {
         return "Week " + week;
     }
 
+    private String getSlateSundayForWeek(int ncaafWeek) {
+        // Week 0 in NCAAF was Sunday, Aug 30, 2026
+        java.time.ZonedDateTime week0Sunday = java.time.ZonedDateTime.of(2026, 8, 30, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
+        return week0Sunday.plusWeeks(ncaafWeek).format(java.time.format.DateTimeFormatter.ofPattern("MMM d"));
+    }
+
     private boolean isWeekLocked(String sport, int weekNumber) {
         java.time.ZonedDateTime week1Start = "NFL".equalsIgnoreCase(sport)
                 ? java.time.ZonedDateTime.of(2026, 9, 8, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"))
@@ -499,5 +559,24 @@ public class BoardView extends VerticalLayout {
 
         int maxWeek = "NFL".equalsIgnoreCase(sport) ? 18 : 16;
         return Math.min(currentWeek, maxWeek);
+    }
+
+    private String getCurrentSlateSunday() {
+        java.time.ZonedDateTime now = java.time.ZonedDateTime.now(java.time.ZoneId.of("America/Los_Angeles"));
+
+        // If today is Monday, we are still wrapping up yesterday's slate.
+        if (now.getDayOfWeek() == java.time.DayOfWeek.MONDAY) {
+            now = now.minusDays(1);
+        } else if (now.getDayOfWeek() == java.time.DayOfWeek.TUESDAY) {
+            // If it's Tuesday, the new slate begins (looking ahead to Sunday).
+            now = now.plusDays(5);
+        }
+
+        // Fast forward to Sunday
+        while (now.getDayOfWeek() != java.time.DayOfWeek.SUNDAY) {
+            now = now.plusDays(1);
+        }
+
+        return now.format(java.time.format.DateTimeFormatter.ofPattern("MMM d"));
     }
 }

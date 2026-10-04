@@ -6,11 +6,9 @@ import com.pickem.app.model.Player;
 import com.pickem.app.service.ConferenceService;
 import com.pickem.app.service.GameSyncService;
 import com.pickem.app.service.OddsService;
-import com.pickem.app.service.PickService;
+import com.pickem.app.service.ParlayService;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
-import com.vaadin.flow.component.combobox.ComboBox;
-import com.vaadin.flow.component.combobox.ComboBoxVariant;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Span;
@@ -18,97 +16,60 @@ import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.component.tabs.Tab;
+import com.vaadin.flow.component.tabs.Tabs;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.component.textfield.TextFieldVariant;
 import com.vaadin.flow.data.value.ValueChangeMode;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.oauth2.core.user.OAuth2User;
 
-import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
-public class PickSelectionDialog extends Dialog {
+public class ParlayPickSelectionDialog extends Dialog {
 
     private final VerticalLayout gameListContainer = new VerticalLayout();
-    private final List<Game> games;
-    private final Map<String, TeamDTO> teamDataMap;
-    private final Map<String, String> localConferenceCache = new HashMap<>();
-    private final PickService pickService;
-    private static final String TOTALS_ICON = "https://cdn-icons-png.flaticon.com/512/1199/1199155.png";
-    private final Map<String, Integer> top25Map;
-    private final String loggedInEmail; // ADD THIS
-    private final boolean isAdmin;
+    private final ParlayService parlayService;
+    private final GameSyncService gameSyncService;
+    private final ConferenceService conferenceService;
+    private final Player player;
+    private final int weekNumber;
+    private final Runnable onPickSaved;
 
-    public PickSelectionDialog(
-            Player player, int slotNumber, String sport, int weekNumber,
-            OddsService oddsService, PickService pickService, ConferenceService conferenceService,
+    private String currentSport = "NCAAF";
+    private Map<String, Integer> top25Map;
+    private Map<String, TeamDTO> teamDataMap;
+    private List<Game> currentGames = new ArrayList<>();
+
+    private static final String TOTALS_ICON = "https://cdn-icons-png.flaticon.com/512/1199/1199155.png";
+
+    public ParlayPickSelectionDialog(
+            Player player, int weekNumber, ParlayService parlayService,
+            OddsService oddsService, ConferenceService conferenceService,
             GameSyncService gameSyncService, Runnable onPickSaved
     ) {
-        // --- CAPTURE AUTHENTICATION CONTEXT ---
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.getPrincipal() instanceof OAuth2User oauth2User) {
-            this.loggedInEmail = oauth2User.getAttribute("email");
-            String loggedInName = oauth2User.getAttribute("name");
-            this.isAdmin = (loggedInName != null && loggedInName.toLowerCase().contains("azich"));
-        } else {
-            this.loggedInEmail = null;
-            this.isAdmin = false;
-        }
-        this.pickService = pickService;
-        this.top25Map = sport.equals("NCAAF") ? conferenceService.getApTop25(weekNumber) : Map.of();
-
-        List<Game> fetchedGames = gameSyncService.getGamesForSportAndWeekFromDb(sport, weekNumber);
-        this.games = fetchedGames != null ? fetchedGames : List.of();
+        this.player = player;
+        this.weekNumber = weekNumber;
+        this.parlayService = parlayService;
+        this.gameSyncService = gameSyncService;
+        this.conferenceService = conferenceService;
+        this.onPickSaved = onPickSaved;
 
         getElement().setAttribute("theme", "dark");
         getElement().getClassList().add("pick-dialog-overlay");
 
-        setHeaderTitle("Select Pick for " + player.getName() + " (Slot " + slotNumber + ")");
+        setHeaderTitle("Select Parlay Leg for " + player.getName());
         setWidth("100%");
         setMaxWidth("560px");
         setHeight("740px");
 
-        gameListContainer.setSizeFull();
-        gameListContainer.getStyle().set("overflow-y", "auto");
-        gameListContainer.getStyle().set("padding-right", "2px");
-        gameListContainer.getStyle().set("padding-bottom", "40px"); // Add this line
+        Tabs sportTabs = new Tabs();
+        sportTabs.setWidthFull();
+        Tab cfbTab = new Tab("NCAAF");
+        Tab nflTab = new Tab("NFL");
+        sportTabs.add(cfbTab, nflTab);
 
-        this.teamDataMap = sport.equals("NCAAF") ? conferenceService.getTeamDataMap() : Map.of();
-
-// 1. Horizontal Scrollable Tabs
-        com.vaadin.flow.component.tabs.Tabs conferenceTabs = new com.vaadin.flow.component.tabs.Tabs();
-        conferenceTabs.setWidthFull();
-
-        java.util.Map<com.vaadin.flow.component.tabs.Tab, String> tabToConferenceMap = new java.util.HashMap<>();
-
-        if (sport.equals("NCAAF")) {
-            List<String> dynamicConferences = new ArrayList<>();
-            dynamicConferences.add("All");
-            dynamicConferences.add("AP Top 25");
-            dynamicConferences.addAll(teamDataMap.values().stream().map(TeamDTO::conference).distinct().sorted().toList());
-
-            for (String conf : dynamicConferences) {
-                com.vaadin.flow.component.tabs.Tab tab = new com.vaadin.flow.component.tabs.Tab(conf);
-                tabToConferenceMap.put(tab, conf);
-                conferenceTabs.add(tab);
-            }
-        } else {
-            for (String conf : List.of("All", "AFC", "NFC")) {
-                com.vaadin.flow.component.tabs.Tab tab = new com.vaadin.flow.component.tabs.Tab(conf);
-                tabToConferenceMap.put(tab, conf);
-                conferenceTabs.add(tab);
-            }
-        }
-
-        // 2. Search field stays full width
         TextField searchField = new TextField();
         searchField.setPlaceholder("Search team name...");
         searchField.setClearButtonVisible(true);
@@ -118,19 +79,7 @@ public class PickSelectionDialog extends Dialog {
         searchField.getElement().setAttribute("theme", "dark");
         searchField.setValueChangeMode(ValueChangeMode.LAZY);
 
-        conferenceTabs.addSelectedChangeListener(event -> {
-            String selectedConf = tabToConferenceMap.get(event.getSelectedTab());
-            if (selectedConf != null) {
-                renderGames(selectedConf, searchField.getValue(), player, slotNumber, sport, weekNumber, onPickSaved);
-            }
-        });
-
-        searchField.addValueChangeListener(event -> {
-            String selectedConf = tabToConferenceMap.get(conferenceTabs.getSelectedTab());
-            renderGames(selectedConf, event.getValue(), player, slotNumber, sport, weekNumber, onPickSaved);
-        });
-
-        VerticalLayout filterBar = new VerticalLayout(conferenceTabs, searchField);
+        VerticalLayout filterBar = new VerticalLayout(sportTabs, searchField);
         filterBar.setWidthFull();
         filterBar.setPadding(false);
         filterBar.setSpacing(true);
@@ -140,7 +89,16 @@ public class PickSelectionDialog extends Dialog {
         gameListContainer.getStyle().set("overflow-y", "auto");
         gameListContainer.getStyle().set("padding-right", "2px");
 
-        renderGames("All", "", player, slotNumber, sport, weekNumber, onPickSaved);
+        sportTabs.addSelectedChangeListener(event -> {
+            this.currentSport = event.getSelectedTab().equals(cfbTab) ? "NCAAF" : "NFL";
+            loadGamesForSport();
+            renderGames(searchField.getValue());
+        });
+
+        searchField.addValueChangeListener(event -> renderGames(event.getValue()));
+
+        loadGamesForSport();
+        renderGames("");
 
         VerticalLayout dialogLayout = new VerticalLayout(filterBar, gameListContainer);
         dialogLayout.setPadding(false);
@@ -158,67 +116,34 @@ public class PickSelectionDialog extends Dialog {
         getFooter().add(cancelBtn);
     }
 
-    private void renderGames(
-            String selectedConference, String searchQuery, Player player, int slotNumber, String sport,
-            int weekNumber, Runnable onPickSaved
-    ) {
+    private void loadGamesForSport() {
+        this.top25Map = currentSport.equals("NCAAF") ? conferenceService.getApTop25(weekNumber) : Map.of();
+        this.teamDataMap = currentSport.equals("NCAAF") ? conferenceService.getTeamDataMap() : Map.of();
+        List<Game> fetchedGames = gameSyncService.getGamesForSportAndWeekFromDb(currentSport, weekNumber);
+        this.currentGames = fetchedGames != null ? fetchedGames : new ArrayList<>();
+    }
+
+    private void renderGames(String searchQuery) {
         gameListContainer.removeAll();
 
-        if (games == null || games.isEmpty()) {
+        if (currentGames.isEmpty()) {
             gameListContainer.add(new Span("No upcoming games found."));
             return;
         }
 
         String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase();
         Instant liveCutoff = Instant.now();
-
-        // 1. FILTER THE GAMES
-        List<Game> filteredGames = new ArrayList<>();
-        for (Game game : games) {
-            String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam() : "";
-            String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam() : "";
-
-            boolean matchesSearch = query.isEmpty()
-                    || awayTeam.toLowerCase().contains(query)
-                    || homeTeam.toLowerCase().contains(query);
-            if (!matchesSearch) continue;
-
-            if (selectedConference != null && !selectedConference.equals("All") && sport.equals("NCAAF")) {
-                if (selectedConference.equals("AP Top 25")) {
-                    if (!top25Map.containsKey(awayTeam) && !top25Map.containsKey(homeTeam)) {
-                        continue;
-                    }
-                } else {
-                    String homeConf = getConference(homeTeam);
-                    String awayConf = getConference(awayTeam);
-
-                    if (!selectedConference.equals(homeConf) && !selectedConference.equals(awayConf)) {
-                        continue;
-                    }
-                }
-            }
-            filteredGames.add(game);
-        }
-
-        // 2. SORT THE GAMES BY RANK
-        if ("AP Top 25".equals(selectedConference)) {
-            filteredGames.sort((g1, g2) -> {
-                int rank1 = Math.min(top25Map.getOrDefault(g1.getAwayTeam(), 99), top25Map.getOrDefault(g1.getHomeTeam(), 99));
-                int rank2 = Math.min(top25Map.getOrDefault(g2.getAwayTeam(), 99), top25Map.getOrDefault(g2.getHomeTeam(), 99));
-                return Integer.compare(rank1, rank2);
-            });
-        }
-
         int matchedCount = 0;
 
-        // 3. RENDER THE UI
-        for (Game game : filteredGames) {
+        for (Game game : currentGames) {
             String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam() : "";
             String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam() : "";
 
-            boolean isLiveOrFinished = game.getCommenceTime() != null &&
-                    game.getCommenceTime().isBefore(liveCutoff);
+            if (!query.isEmpty() && !awayTeam.toLowerCase().contains(query) && !homeTeam.toLowerCase().contains(query)) {
+                continue;
+            }
 
+            boolean isLiveOrFinished = game.getCommenceTime() != null && game.getCommenceTime().isBefore(liveCutoff);
             boolean isCompleted = Boolean.TRUE.equals(game.getCompleted());
 
             matchedCount++;
@@ -242,7 +167,6 @@ public class PickSelectionDialog extends Dialog {
 
             String matchNameStr = awayTeam + " @ " + homeTeam;
 
-            // --- START TIME HEADER ---
             HorizontalLayout timeRow = new HorizontalLayout();
             timeRow.setWidthFull();
             timeRow.setJustifyContentMode(FlexComponent.JustifyContentMode.START);
@@ -250,12 +174,8 @@ public class PickSelectionDialog extends Dialog {
 
             Span timeSpan = new Span();
             timeSpan.getStyle().set("font-size", "0.70em");
-
-            if (isLiveOrFinished) {
-                timeSpan.getStyle().set("color", "#ef4444").set("font-weight", "600");
-            } else {
-                timeSpan.getStyle().set("color", "#94a3b8");
-            }
+            timeSpan.getStyle().set("color", isLiveOrFinished ? "#ef4444" : "#94a3b8");
+            if (isLiveOrFinished) timeSpan.getStyle().set("font-weight", "600");
 
             if (game.getCommenceTime() != null) {
                 long epochMillis = game.getCommenceTime().toEpochMilli();
@@ -265,13 +185,9 @@ public class PickSelectionDialog extends Dialog {
                         "if ($1 && !$2) text += ' • IN PROGRESS';" +
                         "if ($2) text += ' • FINAL';" +
                         "this.textContent = text;";
-
                 timeSpan.getElement().executeJs(js, (double) epochMillis, isLiveOrFinished, isCompleted);
             } else {
-                String fallback = "TBD";
-                if (isCompleted) fallback += " • FINAL";
-                else if (isLiveOrFinished) fallback += " • IN PROGRESS";
-                timeSpan.setText(fallback);
+                timeSpan.setText("TBD");
             }
             timeRow.add(timeSpan);
 
@@ -291,8 +207,9 @@ public class PickSelectionDialog extends Dialog {
             Span awayName = new Span(awayRank + awayTeam);
             styleTeamName(awayName);
 
-            awayRow.add(awayLogo, awayName);
+            awayRow.add(awayLogo, awayName); // 1. Add logo and name first
 
+            // 2. Only inject a score span if the game is finished
             if (isCompleted && game.getAwayScore() != null) {
                 Span awayScoreSpan = new Span(String.valueOf(Math.round(game.getAwayScore().doubleValue())));
                 awayScoreSpan.getStyle()
@@ -314,7 +231,7 @@ public class PickSelectionDialog extends Dialog {
                 String pointStr = awayPoint > 0 ? "+" + awayPoint : String.valueOf(awayPoint);
                 awayBtn.setText(pointStr);
                 String selectionStr = awayTeam + " " + pointStr;
-                awayBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, awayLogoUrl, game.getId(), awayPoint, matchNameStr, "spread", awayTeam, onPickSaved));
+                awayBtn.addClickListener(e -> submitPick(selectionStr, awayLogoUrl, game.getId(), awayPoint, matchNameStr));
             } else {
                 awayBtn.setText("N/A");
                 awayBtn.setEnabled(false);
@@ -329,16 +246,16 @@ public class PickSelectionDialog extends Dialog {
                 String pointStr = "O " + overPoint;
                 overBtn.setText(pointStr);
                 String selectionStr = matchNameStr + " " + pointStr;
-                overBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, dualLogoUrls, game.getId(), overPoint, matchNameStr, "total", "Over", onPickSaved));
+                overBtn.addClickListener(e -> submitPick(selectionStr, dualLogoUrls, game.getId(), overPoint, matchNameStr));
             } else {
                 overBtn.setText("N/A");
                 overBtn.setEnabled(false);
             }
 
-            awayRow.add(awayBtn, overBtn);
+            awayRow.add(awayBtn, overBtn); // 3. Append buttons last
             awayRow.expand(awayName);
 
-            // --- HOME TEAM ROW ---
+// --- HOME TEAM ROW ---
             HorizontalLayout homeRow = new HorizontalLayout();
             homeRow.setWidthFull();
             homeRow.setSpacing(false);
@@ -349,14 +266,15 @@ public class PickSelectionDialog extends Dialog {
             Image homeLogo = new Image(homeLogoUrl, homeTeam + " logo");
             homeLogo.setWidth("20px");
             homeLogo.setHeight("20px");
-            homeRow.getStyle().set("margin-top", "4px");
+            homeLogo.getStyle().set("flex-shrink", "0");
 
             String homeRank = top25Map.containsKey(homeTeam) ? "#" + top25Map.get(homeTeam) + " " : "";
             Span homeName = new Span(homeRank + homeTeam);
             styleTeamName(homeName);
 
-            homeRow.add(homeLogo, homeName);
+            homeRow.add(homeLogo, homeName); // 1. Add logo and name first
 
+            // 2. Only inject a score span if the game is finished
             if (isCompleted && game.getHomeScore() != null) {
                 Span homeScoreSpan = new Span(String.valueOf(Math.round(game.getHomeScore().doubleValue())));
                 homeScoreSpan.getStyle()
@@ -378,7 +296,7 @@ public class PickSelectionDialog extends Dialog {
                 String pointStr = homePoint > 0 ? "+" + homePoint : String.valueOf(homePoint);
                 homeBtn.setText(pointStr);
                 String selectionStr = homeTeam + " " + pointStr;
-                homeBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, homeLogoUrl, game.getId(), homePoint, matchNameStr, "spread", homeTeam, onPickSaved));
+                homeBtn.addClickListener(e -> submitPick(selectionStr, homeLogoUrl, game.getId(), homePoint, matchNameStr));
             } else {
                 homeBtn.setText("N/A");
                 homeBtn.setEnabled(false);
@@ -393,14 +311,14 @@ public class PickSelectionDialog extends Dialog {
                 String pointStr = "U " + underPoint;
                 underBtn.setText(pointStr);
                 String selectionStr = matchNameStr + " " + pointStr;
-                underBtn.addClickListener(e -> submitPick(player, slotNumber, sport, weekNumber, selectionStr, dualLogoUrls, game.getId(), underPoint, matchNameStr, "total", "Under", onPickSaved));
+                underBtn.addClickListener(e -> submitPick(selectionStr, dualLogoUrls, game.getId(), underPoint, matchNameStr));
             } else {
                 underBtn.setText("N/A");
                 underBtn.setEnabled(false);
             }
 
-            homeRow.add(homeBtn, underBtn);
-            homeRow.expand(homeName);
+            homeRow.add(homeBtn, underBtn); // 3. Append buttons last
+            homeRow.expand(homeName);       // 4. Expand name to push buttons right
 
             gameCard.add(timeRow, awayRow, homeRow);
             gameListContainer.add(gameCard);
@@ -417,7 +335,6 @@ public class PickSelectionDialog extends Dialog {
                 .set("font-weight", "600")
                 .set("color", "#f8fafc")
                 .set("line-height", "1")
-                // Force a single line with an ellipsis
                 .set("white-space", "nowrap")
                 .set("overflow", "hidden")
                 .set("text-overflow", "ellipsis")
@@ -440,60 +357,11 @@ public class PickSelectionDialog extends Dialog {
                 .set("z-index", "10");       // Protects against transparent overlays
     }
 
-    private void submitPick(Player player, int slotNumber, String sport, int weekNumber, String selection,
-                            String logoUrl, String gameId, Double lockedPoint, String matchName,
-                            String marketType, String selectionSide, Runnable onPickSaved) {
-
-        // Security check: ensure logged-in user owns this player slot or is Admin
-        if (!canUserEditPlayer(player)) {
-            System.out.println("Unauthorized pick attempt for player: " + player.getName());
-            return;
-        }
-
-        // 1. Pass an empty lambda () -> {} so the service doesn't trigger the UI refresh prematurely
-        pickService.savePickWithBurnCheck(player, slotNumber, sport, weekNumber, selection, logoUrl,
-                gameId, lockedPoint, matchName, marketType, selectionSide, () -> {});
-
-        // 2. The transaction is now fully committed! We can safely refresh the UI.
+    private void submitPick(String selection, String logoUrl, String gameId, Double lockedPoint, String matchName) {
+        parlayService.saveOrUpdatePick(player, weekNumber, currentSport, gameId, selection, lockedPoint, matchName, logoUrl);
         if (onPickSaved != null) {
             onPickSaved.run();
         }
-
         close();
-    }
-
-    private TeamDTO getTeamData(String teamName) {
-        if (teamDataMap.isEmpty()) return null;
-        TeamDTO bestMatch = null;
-        int maxMatchLength = 0;
-        for (Map.Entry<String, TeamDTO> entry : teamDataMap.entrySet()) {
-            String cfbdTeamName = entry.getKey();
-            if (teamName.startsWith(cfbdTeamName)) {
-                if (cfbdTeamName.length() > maxMatchLength) {
-                    maxMatchLength = cfbdTeamName.length();
-                    bestMatch = entry.getValue();
-                }
-            }
-        }
-        return bestMatch;
-    }
-
-    private String getConference(String teamName) {
-        if (localConferenceCache.containsKey(teamName)) {
-            return localConferenceCache.get(teamName);
-        }
-        TeamDTO teamData = getTeamData(teamName);
-        String conf = teamData != null ? teamData.conference() : "Other";
-        localConferenceCache.put(teamName, conf);
-        return conf;
-    }
-
-    private boolean canUserEditPlayer(Player targetPlayer) {
-        if (this.isAdmin) {
-            return true;
-        }
-        return this.loggedInEmail != null
-                && targetPlayer.getEmail() != null
-                && targetPlayer.getEmail().equalsIgnoreCase(this.loggedInEmail);
     }
 }
