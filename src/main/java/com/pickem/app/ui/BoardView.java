@@ -66,14 +66,16 @@ public class BoardView extends VerticalLayout {
 
         TabSheet tabSheet = new TabSheet();
         tabSheet.setSizeFull();
-        tabSheet.addThemeVariants(TabSheetVariant.LUMO_TABS_CENTERED, TabSheetVariant.LUMO_BORDERED);
+        // 1. Remove LUMO_TABS_CENTERED so the suffix component works properly on mobile
+        tabSheet.addThemeVariants(TabSheetVariant.LUMO_BORDERED);
 
         Image collegeLogo = new Image("/images/cfp.png", "College Football Logo");
         collegeLogo.setWidth("20px");
         collegeLogo.setHeight("20px");
         collegeLogo.getStyle().set("margin-right", "8px");
 
-        HorizontalLayout collegeTabLabel = new HorizontalLayout(collegeLogo, new Span("College Football"));
+        // 2. Shorten the text from "College Football" to "CFB" to save horizontal space
+        HorizontalLayout collegeTabLabel = new HorizontalLayout(collegeLogo, new Span("CFB"));
         collegeTabLabel.setAlignItems(Alignment.CENTER);
         collegeTabLabel.setSpacing(false);
 
@@ -87,27 +89,23 @@ public class BoardView extends VerticalLayout {
         nflTabLabel.setSpacing(false);
 
         Button groupParlayBtn = new Button();
-        groupParlayBtn.getStyle()
-                .set("position", "absolute")
-                .set("top", "16px")
-                .set("right", "16px")
-                .set("z-index", "10");
+        // 3. Remove absolute positioning; add a small right margin for padding
+        groupParlayBtn.getStyle().set("margin-right", "8px");
 
-        // State trackers for the currently viewed data
         int[] currentWeeks = { calculateCurrentWeek("NCAAF"), calculateCurrentWeek("NFL") };
         String[] currentTab = { "NCAAF" };
 
         Runnable updateParlayBtnState = () -> {
-            // Normalize the week (NFL Week 1 == NCAAF Week 2)
             int masterWeek = currentTab[0].equals("NCAAF") ? currentWeeks[0] : (currentWeeks[1] + 1);
             int lockedCount = parlayService.getLockedPickCount(masterWeek);
             String slateLabel = getSlateSundayForWeek(masterWeek);
 
+            // 4. Drop the word "Parlay" to save pixels on mobile (e.g. "Oct 4 (0/5)")
             if (lockedCount >= 5) {
-                groupParlayBtn.setText(slateLabel + " Parlay (Ready)");
+                groupParlayBtn.setText(slateLabel + " (Ready)");
                 groupParlayBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_SUCCESS, com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
             } else {
-                groupParlayBtn.setText(slateLabel + " Parlay (" + lockedCount + "/5)");
+                groupParlayBtn.setText(slateLabel + " (" + lockedCount + "/5)");
                 groupParlayBtn.removeThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_SUCCESS);
                 groupParlayBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
             }
@@ -122,7 +120,9 @@ public class BoardView extends VerticalLayout {
             dialog.open();
         });
 
-        // Register the tabs and pass in a callback to update state when the dropdown changes
+        // 5. Use Vaadin's native suffix component layout now that CENTERED is removed
+        tabSheet.setSuffixComponent(groupParlayBtn);
+
         com.vaadin.flow.component.tabs.Tab cfbTab = tabSheet.add(collegeTabLabel, createTabContent("NCAAF", week -> {
             currentWeeks[0] = week;
             if (currentTab[0].equals("NCAAF")) updateParlayBtnState.run();
@@ -133,14 +133,15 @@ public class BoardView extends VerticalLayout {
             if (currentTab[0].equals("NFL")) updateParlayBtnState.run();
         }));
 
-        // Update the button instantly when the user clicks a different tab header
         tabSheet.addSelectedChangeListener(event -> {
             currentTab[0] = event.getSelectedTab().equals(cfbTab) ? "NCAAF" : "NFL";
             updateParlayBtnState.run();
         });
 
         updateParlayBtnState.run();
-        add(groupParlayBtn, tabSheet);
+
+        // 6. Only add the tabSheet; the button is now nested inside it
+        add(tabSheet);
     }
 
     private VerticalLayout createTabContent(String sport, java.util.function.Consumer<Integer> onWeekChanged) {
