@@ -306,24 +306,41 @@ public class GameSyncService {
             game.setAwayLogo(getLogoUrl(baseInfo.awayTeam(), sport));
             game.setCommenceTime(baseInfo.eventStartTime());
 
+            // Target the standard -110 juice (vig) instead of an even 50% probability
+            // and apply changes to BOTH teams simultaneously to guarantee symmetry
+            double bestSpreadDiff = Double.MAX_VALUE;
+            double bestTotalDiff = Double.MAX_VALUE;
+
             for (GameOddsDTO odd : gameOdds) {
-                if (odd.selection() == null || odd.line() == null) continue;
+                if (odd.selection() == null || odd.line() == null || odd.oddsAmerican() == null) continue;
+
+                int american = odd.oddsAmerican();
+                if (american < -200 || american > 200) continue;
+
+                // Measure distance directly to -110 American odds (the sportsbook main line)
+                double diffToMainVig = Math.abs(american + 110.0);
 
                 String selection = odd.selection().trim().toLowerCase();
                 String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam().trim().toLowerCase() : "";
                 String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam().trim().toLowerCase() : "";
 
                 if ("point_spread".equalsIgnoreCase(odd.marketType())) {
-                    if (selection.equalsIgnoreCase(awayTeam) || awayTeam.contains(selection) || selection.contains(awayTeam)) {
-                        game.setAwaySpread(odd.line());
-                    } else if (selection.equalsIgnoreCase(homeTeam) || homeTeam.contains(selection) || selection.contains(homeTeam)) {
-                        game.setHomeSpread(odd.line());
+                    if (diffToMainVig < bestSpreadDiff) {
+                        if (selection.equalsIgnoreCase(awayTeam) || awayTeam.contains(selection) || selection.contains(awayTeam)) {
+                            game.setAwaySpread(odd.line());
+                            game.setHomeSpread(-odd.line()); // Force symmetric reflection
+                            bestSpreadDiff = diffToMainVig;
+                        } else if (selection.equalsIgnoreCase(homeTeam) || homeTeam.contains(selection) || selection.contains(homeTeam)) {
+                            game.setHomeSpread(odd.line());
+                            game.setAwaySpread(-odd.line()); // Force symmetric reflection
+                            bestSpreadDiff = diffToMainVig;
+                        }
                     }
                 } else if ("total_points".equalsIgnoreCase(odd.marketType())) {
-                    if ("over".equalsIgnoreCase(selection)) {
+                    if (diffToMainVig < bestTotalDiff) {
                         game.setOverTotal(odd.line());
-                    } else if ("under".equalsIgnoreCase(selection)) {
-                        game.setUnderTotal(odd.line());
+                        game.setUnderTotal(odd.line()); // Totals are always identical
+                        bestTotalDiff = diffToMainVig;
                     }
                 }
             }

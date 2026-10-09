@@ -82,6 +82,14 @@ public class OddsService {
                 com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(response.getBody());
                 com.fasterxml.jackson.databind.JsonNode dataArray = root.path("data");
 
+                // --- ADD THIS LOGGING BLOCK ---
+                // Print only the very first item on the first page to avoid flooding the console
+                if (pageCount == 0 && dataArray.isArray() && dataArray.size() > 0) {
+                    System.out.println("👀 RAW FANDUEL PAYLOAD EXAMPLE:");
+                    System.out.println(dataArray.get(0).toPrettyString());
+                }
+                // ------------------------------
+
                 int count = 0;
                 if (dataArray.isArray()) {
                     for (com.fasterxml.jackson.databind.JsonNode node : dataArray) {
