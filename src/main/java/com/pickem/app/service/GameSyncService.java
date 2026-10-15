@@ -253,9 +253,9 @@ public class GameSyncService {
 
         System.out.println("📊 Processing " + apiOddsList.size() + " odds items for " + sport);
 
-        // Deduplicate SharpAPI's bucket IDs (_b0, _b1, etc.) into clean base keys
+        // Group by base ID, discarding any items without event IDs or team names
         Map<String, List<GameOddsDTO>> oddsByGame = apiOddsList.stream()
-                .filter(dto -> dto.eventId() != null)
+                .filter(dto -> dto.eventId() != null && dto.homeTeam() != null && dto.awayTeam() != null)
                 .collect(Collectors.groupingBy(dto -> getBaseEventId(dto.eventId())));
 
         List<Game> existingDbGames = gameRepo.findAll().stream()
@@ -267,109 +267,102 @@ public class GameSyncService {
         Instant now = Instant.now();
 
         for (Map.Entry<String, List<GameOddsDTO>> entry : oddsByGame.entrySet()) {
-            String baseEventId = entry.getKey();
-            List<GameOddsDTO> gameOdds = entry.getValue();
-            GameOddsDTO baseInfo = gameOdds.get(0);
+            try {
+                String baseEventId = entry.getKey();
+                List<GameOddsDTO> gameOdds = entry.getValue();
+                if (gameOdds.isEmpty()) continue;
 
-            // 1. FBS Gatekeeper: Validate that logos exist for both teams
-            String awayLogo = getLogoUrl(baseInfo.awayTeam(), sport);
-            String homeLogo = getLogoUrl(baseInfo.homeTeam(), sport);
+                GameOddsDTO baseInfo = gameOdds.get(0);
+                if (baseInfo.homeTeam() == null || baseInfo.awayTeam() == null) continue;
 
-            if (awayLogo == null || homeLogo == null) {
-                continue; // Drops FCS programs and unverified match-ups
-            }
+                // 1. FBS Gatekeeper: Validate that logos exist for both teams
+                String awayLogo = getLogoUrl(baseInfo.awayTeam(), sport);
+                String homeLogo = getLogoUrl(baseInfo.homeTeam(), sport);
 
-            // Determine kickoff time from the newest line in the group
-            Instant latestKickoff = gameOdds.stream()
-                    .map(GameOddsDTO::eventStartTime)
-                    .filter(Objects::nonNull)
-                    .max(Instant::compareTo)
-                    .orElse(baseInfo.eventStartTime());
+                if (awayLogo == null || homeLogo == null) {
+                    continue; // Drops FCS programs
+                }
 
-            // 2. Build canonical matchup key to prevent duplicates even if SharpAPI modifies the ID
-            String canonicalKey = buildCanonicalMatchupKey(sport, baseInfo.homeTeam(), baseInfo.awayTeam(), latestKickoff);
+                Instant latestKickoff = gameOdds.stream()
+                        .map(GameOddsDTO::eventStartTime)
+                        .filter(Objects::nonNull)
+                        .max(Instant::compareTo)
+                        .orElse(baseInfo.eventStartTime());
 
-            // 3. Match against currently staged games first, then against DB
-            Game game = gamesToSaveMap.get(canonicalKey);
+                String canonicalKey = buildCanonicalMatchupKey(sport, baseInfo.homeTeam(), baseInfo.awayTeam(), latestKickoff);
 
-            if (game == null) {
-                game = existingDbGames.stream()
-                        .filter(g -> isSameMatchup(g, baseEventId, sport, baseInfo.homeTeam(), baseInfo.awayTeam(), latestKickoff))
-                        .findFirst()
-                        .orElse(null);
-            }
+                Game game = gamesToSaveMap.get(canonicalKey);
 
-            if (game == null) {
-                game = new Game();
-                game.setId(baseEventId);
-            }
+                if (game == null) {
+                    game = existingDbGames.stream()
+                            .filter(g -> isSameMatchup(g, baseEventId, sport, baseInfo.homeTeam(), baseInfo.awayTeam(), latestKickoff))
+                            .findFirst()
+                            .orElse(null);
+                }
 
-            // Do not alter historical or currently live games
-            if (game.getCommenceTime() != null && game.getCommenceTime().isBefore(now)) {
-                continue;
-            }
+                if (game == null) {
+                    game = new Game();
+                    game.setId(baseEventId);
+                }
 
-            Double previousAwaySpread = game.getAwaySpread();
-            Double previousHomeSpread = game.getHomeSpread();
-            Double previousTotal = game.getOverTotal();
+                if (game.getCommenceTime() != null && game.getCommenceTime().isBefore(now)) {
+                    continue;
+                }
 
-            game.setSport(sport);
-            game.setHomeTeam(baseInfo.homeTeam());
-            game.setAwayTeam(baseInfo.awayTeam());
-            game.setHomeLogo(homeLogo);
-            game.setAwayLogo(awayLogo);
-            game.setCommenceTime(latestKickoff);
+                Double previousAwaySpread = game.getAwaySpread();
+                Double previousHomeSpread = game.getHomeSpread();
+                Double previousTotal = game.getOverTotal();
 
-            // 4. Mathematical filtering for -110 main line symmetry
-            double bestSpreadDiff = Double.MAX_VALUE;
-            double bestTotalDiff = Double.MAX_VALUE;
+                game.setSport(sport);
+                game.setHomeTeam(baseInfo.homeTeam());
+                game.setAwayTeam(baseInfo.awayTeam());
+                game.setHomeLogo(homeLogo);
+                game.setAwayLogo(awayLogo);
+                game.setCommenceTime(latestKickoff);
 
-            for (GameOddsDTO odd : gameOdds) {
-                if (odd.selection() == null || odd.line() == null || odd.oddsAmerican() == null) continue;
+                // Main line extraction: prefer is_main_line == true
+                for (GameOddsDTO odd : gameOdds) {
+                    if (odd.selection() == null || odd.line() == null) continue;
 
-                int american = odd.oddsAmerican();
-                if (american < -200 || american > 200) continue;
+                    // If SharpAPI provides the is_main_line flag, enforce it!
+                    if (Boolean.FALSE.equals(odd.isMainLine())) {
+                        continue;
+                    }
 
-                double diffToMainVig = Math.abs(Math.abs(american) - 110.0);
+                    String selection = odd.selection().trim().toLowerCase();
+                    String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam().trim().toLowerCase() : "";
+                    String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam().trim().toLowerCase() : "";
 
-                String selection = odd.selection().trim().toLowerCase();
-                String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam().trim().toLowerCase() : "";
-                String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam().trim().toLowerCase() : "";
-
-                if ("point_spread".equalsIgnoreCase(odd.marketType())) {
-                    if (diffToMainVig < bestSpreadDiff) {
+                    if ("point_spread".equalsIgnoreCase(odd.marketType())) {
                         if (selection.equalsIgnoreCase(awayTeam) || awayTeam.contains(selection) || selection.contains(awayTeam)) {
                             game.setAwaySpread(odd.line());
                             game.setHomeSpread(-odd.line());
-                            bestSpreadDiff = diffToMainVig;
                         } else if (selection.equalsIgnoreCase(homeTeam) || homeTeam.contains(selection) || selection.contains(homeTeam)) {
                             game.setHomeSpread(odd.line());
                             game.setAwaySpread(-odd.line());
-                            bestSpreadDiff = diffToMainVig;
                         }
-                    }
-                } else if ("total_points".equalsIgnoreCase(odd.marketType())) {
-                    if (diffToMainVig < bestTotalDiff) {
+                    } else if ("total_points".equalsIgnoreCase(odd.marketType())) {
                         game.setOverTotal(odd.line());
                         game.setUnderTotal(odd.line());
-                        bestTotalDiff = diffToMainVig;
                     }
                 }
-            }
 
-            gamesToSaveMap.put(canonicalKey, game);
+                gamesToSaveMap.put(canonicalKey, game);
 
-            boolean linesChanged = !Objects.equals(previousAwaySpread, game.getAwaySpread()) ||
-                    !Objects.equals(previousHomeSpread, game.getHomeSpread()) ||
-                    !Objects.equals(previousTotal, game.getOverTotal());
+                boolean linesChanged = !Objects.equals(previousAwaySpread, game.getAwaySpread()) ||
+                        !Objects.equals(previousHomeSpread, game.getHomeSpread()) ||
+                        !Objects.equals(previousTotal, game.getOverTotal());
 
-            if (linesChanged && game.getId() != null) {
-                OddsHistory newOdds = new OddsHistory();
-                newOdds.setGameId(game.getId());
-                newOdds.setHomeSpread(game.getHomeSpread());
-                newOdds.setAwaySpread(game.getAwaySpread());
-                newOdds.setTotal(game.getOverTotal());
-                historyToSaveList.add(newOdds);
+                if (linesChanged && game.getId() != null) {
+                    OddsHistory newOdds = new OddsHistory();
+                    newOdds.setGameId(game.getId());
+                    newOdds.setHomeSpread(game.getHomeSpread());
+                    newOdds.setAwaySpread(game.getAwaySpread());
+                    newOdds.setTotal(game.getOverTotal());
+                    historyToSaveList.add(newOdds);
+                }
+            } catch (Exception loopEx) {
+                System.err.println("⚠️ Error processing individual game in " + sport + ": " + loopEx.getMessage());
             }
         }
 

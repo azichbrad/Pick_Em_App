@@ -65,7 +65,8 @@ public class OddsService {
         headers.set("Accept", "application/json");
         org.springframework.http.HttpEntity<String> entity = new org.springframework.http.HttpEntity<>(headers);
 
-        while (hasMore && pageCount < 20) {
+        // Increased from 20 to 100 to accommodate massive NCAAF slates
+        while (hasMore && pageCount < 100) {
             String pagedUrl = apiUrl;
             try {
                 if (cursor != null && !cursor.isEmpty()) {
