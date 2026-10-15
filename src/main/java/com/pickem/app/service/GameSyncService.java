@@ -27,6 +27,8 @@ import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -36,7 +38,16 @@ public class GameSyncService {
     private final GameRepository gameRepo;
     private final PlayerRepository playerRepo;
     private final OddsService oddsService;
+    private final PickRepository pickRepo;
+    private final PlayerRecordRepository playerRecordRepo;
+    private final OddsHistoryRepository oddsHistoryRepo;
+    private final RestTemplate restTemplate;
+
+    @Value("${cfbd.api.key}")
+    private String cfbdApiKey;
+
     private final Map<String, String> logoCache = new HashMap<>();
+
     private static final Map<String, String> NFL_ABBREVIATIONS = Map.ofEntries(
             Map.entry("arizona cardinals", "ari"), Map.entry("atlanta falcons", "atl"),
             Map.entry("baltimore ravens", "bal"), Map.entry("buffalo bills", "buf"),
@@ -55,8 +66,8 @@ public class GameSyncService {
             Map.entry("seattle seahawks", "sea"), Map.entry("tampa bay buccaneers", "tb"),
             Map.entry("tennessee titans", "ten"), Map.entry("washington commanders", "was")
     );
+
     private static final Map<String, String> MANUAL_OVERRIDES = Map.ofEntries(
-            // CFBD Accents & Character Mappings
             Map.entry("hawaii", "hawai'i"),
             Map.entry("hawaii rainbow warriors", "hawai'i"),
             Map.entry("san jose state", "san josé state"),
@@ -81,18 +92,12 @@ public class GameSyncService {
             "mcneese", "https://a.espncdn.com/i/teamlogos/ncaa/500/2377.png",
             "tarleton state", "https://a.espncdn.com/i/teamlogos/ncaa/500/2607.png",
             "central arkansas", "https://a.espncdn.com/i/teamlogos/ncaa/500/2110.png",
-            "ul monroe", "https://a.espncdn.com/i/teamlogos/ncaa/500/2433.png" // The Final Boss
+            "ul monroe", "https://a.espncdn.com/i/teamlogos/ncaa/500/2433.png"
     );
 
-    private final PickRepository pickRepo;
-    private final PlayerRecordRepository playerRecordRepo;
-    private final OddsHistoryRepository oddsHistoryRepo;
-    private final RestTemplate restTemplate;
-
-    @Value("${cfbd.api.key}")
-    private String cfbdApiKey;
-
-    public GameSyncService(PickRepository pickRepo, GameRepository gameRepo, OddsService oddsService, PlayerRepository playerRepo, PlayerRecordRepository playerRecordRepo, OddsHistoryRepository oddsHistoryRepo, RestTemplateBuilder restTemplateBuilder) {
+    public GameSyncService(PickRepository pickRepo, GameRepository gameRepo, OddsService oddsService,
+                           PlayerRepository playerRepo, PlayerRecordRepository playerRecordRepo,
+                           OddsHistoryRepository oddsHistoryRepo, RestTemplateBuilder restTemplateBuilder) {
         this.gameRepo = gameRepo;
         this.oddsService = oddsService;
         this.pickRepo = pickRepo;
@@ -109,10 +114,14 @@ public class GameSyncService {
     public void simulateAndGradeWeek(int weekNumber, String sport) {
         System.out.println("🚀 Starting simulation for Week " + weekNumber + " (" + sport + ")");
 
+        Instant now = Instant.now();
         List<Game> games = gameRepo.findAll();
-        System.out.println("🏈 Found " + games.size() + " total games in database.");
 
         for (Game game : games) {
+            // Guardrail: Never simulate or finalize upcoming games
+            if (game.getCommenceTime() != null && game.getCommenceTime().isAfter(now)) {
+                continue;
+            }
             game.setAwayScore((int) (Math.random() * 45));
             game.setHomeScore((int) (Math.random() * 45));
             game.setCompleted(true);
@@ -120,17 +129,12 @@ public class GameSyncService {
         gameRepo.saveAll(games);
 
         List<Pick> picks = pickRepo.findByWeekNumberAndSport(weekNumber, sport);
-        System.out.println("🎯 Found " + picks.size() + " picks matching Week " + weekNumber + " and Sport " + sport);
 
         for (Pick pick : picks) {
-            if (pick.getGameId() == null || pick.getId() == null) {
-                continue;
-            }
+            if (pick.getGameId() == null || pick.getId() == null) continue;
 
             Game game = gameRepo.findById(pick.getGameId()).orElse(null);
-            if (game == null || !Boolean.TRUE.equals(game.getCompleted())) {
-                continue;
-            }
+            if (game == null || !Boolean.TRUE.equals(game.getCompleted())) continue;
 
             double lockedPoint = pick.getLockedPoint();
             String status = "PENDING";
@@ -154,9 +158,7 @@ public class GameSyncService {
             pick.setStatus(status);
         }
 
-        List<Pick> validPicksToSave = picks.stream()
-                .filter(p -> p.getId() != null)
-                .toList();
+        List<Pick> validPicksToSave = picks.stream().filter(p -> p.getId() != null).toList();
         pickRepo.saveAll(validPicksToSave);
 
         Map<Player, List<Pick>> picksByPlayer = validPicksToSave.stream()
@@ -192,7 +194,10 @@ public class GameSyncService {
     }
 
     @EventListener(ApplicationReadyEvent.class)
-    @Scheduled(cron = "0 */30 * * * *")
+    public void onStartup() {
+        syncAllOdds();
+    }
+
     public void syncAllOdds() {
         System.out.println("🚀 Starting background odds sync...");
 
@@ -222,10 +227,8 @@ public class GameSyncService {
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(cfbdApiKey);
             HttpEntity<String> entity = new HttpEntity<>(headers);
-            // Inside fetchAndCacheLogos()
             String cfbdUrl = "https://api.collegefootballdata.com/teams/fbs?year=2026";
 
-            // Uses the configured RestTemplate with timeouts instead of an infinite new RestTemplate()
             ResponseEntity<JsonNode> response = restTemplate.exchange(
                     cfbdUrl,
                     HttpMethod.GET,
@@ -238,7 +241,7 @@ public class GameSyncService {
                 System.out.println("✅ Successfully built team logo cache!");
             }
         } catch (Exception e) {
-            System.err.println("❌ Failed to fetch CFBD logos (API might be down or timed out): " + e.getMessage());
+            System.err.println("❌ Failed to fetch CFBD logos: " + e.getMessage());
         }
     }
 
@@ -250,47 +253,59 @@ public class GameSyncService {
 
         System.out.println("📊 Processing " + apiOddsList.size() + " odds items for " + sport);
 
+        // Deduplicate SharpAPI's bucket IDs (_b0, _b1, etc.) into clean base keys
         Map<String, List<GameOddsDTO>> oddsByGame = apiOddsList.stream()
                 .filter(dto -> dto.eventId() != null)
-                .collect(Collectors.groupingBy(GameOddsDTO::eventId));
+                .collect(Collectors.groupingBy(dto -> getBaseEventId(dto.eventId())));
 
-        List<String> eventIds = new ArrayList<>(oddsByGame.keySet());
-
-        // 1. Fetch games by ID
-        Map<String, Game> existingGamesMap = gameRepo.findAllById(eventIds).stream()
-                .collect(Collectors.toMap(Game::getId, g -> g));
-
-        // 2. Fetch ALL games as fallback to match changed event IDs
-        List<Game> allDbGames = gameRepo.findAll();
+        List<Game> existingDbGames = gameRepo.findAll().stream()
+                .filter(g -> sport.equalsIgnoreCase(g.getSport()))
+                .collect(Collectors.toList());
 
         Map<String, Game> gamesToSaveMap = new HashMap<>();
         List<OddsHistory> historyToSaveList = new ArrayList<>();
+        Instant now = Instant.now();
 
         for (Map.Entry<String, List<GameOddsDTO>> entry : oddsByGame.entrySet()) {
-            String eventId = entry.getKey();
+            String baseEventId = entry.getKey();
             List<GameOddsDTO> gameOdds = entry.getValue();
             GameOddsDTO baseInfo = gameOdds.get(0);
 
-            // 1. Check if we already processed it in this current batch
-            Game game = gamesToSaveMap.get(eventId);
+            // 1. FBS Gatekeeper: Validate that logos exist for both teams
+            String awayLogo = getLogoUrl(baseInfo.awayTeam(), sport);
+            String homeLogo = getLogoUrl(baseInfo.homeTeam(), sport);
 
-            // 2. Check pre-loaded memory map by ID
-            if (game == null) {
-                game = existingGamesMap.get(eventId);
+            if (awayLogo == null || homeLogo == null) {
+                continue; // Drops FCS programs and unverified match-ups
             }
 
-            // 3. Fallback: Check DB by teams and sport
+            // Determine kickoff time from the newest line in the group
+            Instant latestKickoff = gameOdds.stream()
+                    .map(GameOddsDTO::eventStartTime)
+                    .filter(Objects::nonNull)
+                    .max(Instant::compareTo)
+                    .orElse(baseInfo.eventStartTime());
+
+            // 2. Build canonical matchup key to prevent duplicates even if SharpAPI modifies the ID
+            String canonicalKey = buildCanonicalMatchupKey(sport, baseInfo.homeTeam(), baseInfo.awayTeam(), latestKickoff);
+
+            // 3. Match against currently staged games first, then against DB
+            Game game = gamesToSaveMap.get(canonicalKey);
+
             if (game == null) {
-                game = allDbGames.stream()
-                        .filter(g -> sport.equalsIgnoreCase(g.getSport()) &&
-                                baseInfo.homeTeam().equalsIgnoreCase(g.getHomeTeam()) &&
-                                baseInfo.awayTeam().equalsIgnoreCase(g.getAwayTeam()))
+                game = existingDbGames.stream()
+                        .filter(g -> isSameMatchup(g, baseEventId, sport, baseInfo.homeTeam(), baseInfo.awayTeam(), latestKickoff))
                         .findFirst()
-                        .orElse(new Game());
+                        .orElse(null);
             }
 
-            if (game.getCommenceTime() != null && game.getCommenceTime().isBefore(Instant.now())) {
-                System.out.println("⏭ SKIPPING " + baseInfo.awayTeam() + " @ " + baseInfo.homeTeam() + " - Start time is in the past: " + game.getCommenceTime());
+            if (game == null) {
+                game = new Game();
+                game.setId(baseEventId);
+            }
+
+            // Do not alter historical or currently live games
+            if (game.getCommenceTime() != null && game.getCommenceTime().isBefore(now)) {
                 continue;
             }
 
@@ -298,16 +313,14 @@ public class GameSyncService {
             Double previousHomeSpread = game.getHomeSpread();
             Double previousTotal = game.getOverTotal();
 
-            game.setId(eventId);
             game.setSport(sport);
             game.setHomeTeam(baseInfo.homeTeam());
             game.setAwayTeam(baseInfo.awayTeam());
-            game.setHomeLogo(getLogoUrl(baseInfo.homeTeam(), sport));
-            game.setAwayLogo(getLogoUrl(baseInfo.awayTeam(), sport));
-            game.setCommenceTime(baseInfo.eventStartTime());
+            game.setHomeLogo(homeLogo);
+            game.setAwayLogo(awayLogo);
+            game.setCommenceTime(latestKickoff);
 
-            // Target the standard -110 juice (vig) instead of an even 50% probability
-            // and apply changes to BOTH teams simultaneously to guarantee symmetry
+            // 4. Mathematical filtering for -110 main line symmetry
             double bestSpreadDiff = Double.MAX_VALUE;
             double bestTotalDiff = Double.MAX_VALUE;
 
@@ -317,8 +330,7 @@ public class GameSyncService {
                 int american = odd.oddsAmerican();
                 if (american < -200 || american > 200) continue;
 
-                // Measure distance directly to -110 American odds (the sportsbook main line)
-                double diffToMainVig = Math.abs(american + 110.0);
+                double diffToMainVig = Math.abs(Math.abs(american) - 110.0);
 
                 String selection = odd.selection().trim().toLowerCase();
                 String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam().trim().toLowerCase() : "";
@@ -328,30 +340,30 @@ public class GameSyncService {
                     if (diffToMainVig < bestSpreadDiff) {
                         if (selection.equalsIgnoreCase(awayTeam) || awayTeam.contains(selection) || selection.contains(awayTeam)) {
                             game.setAwaySpread(odd.line());
-                            game.setHomeSpread(-odd.line()); // Force symmetric reflection
+                            game.setHomeSpread(-odd.line());
                             bestSpreadDiff = diffToMainVig;
                         } else if (selection.equalsIgnoreCase(homeTeam) || homeTeam.contains(selection) || selection.contains(homeTeam)) {
                             game.setHomeSpread(odd.line());
-                            game.setAwaySpread(-odd.line()); // Force symmetric reflection
+                            game.setAwaySpread(-odd.line());
                             bestSpreadDiff = diffToMainVig;
                         }
                     }
                 } else if ("total_points".equalsIgnoreCase(odd.marketType())) {
                     if (diffToMainVig < bestTotalDiff) {
                         game.setOverTotal(odd.line());
-                        game.setUnderTotal(odd.line()); // Totals are always identical
+                        game.setUnderTotal(odd.line());
                         bestTotalDiff = diffToMainVig;
                     }
                 }
             }
 
-            gamesToSaveMap.put(game.getId(), game);
+            gamesToSaveMap.put(canonicalKey, game);
 
             boolean linesChanged = !Objects.equals(previousAwaySpread, game.getAwaySpread()) ||
                     !Objects.equals(previousHomeSpread, game.getHomeSpread()) ||
                     !Objects.equals(previousTotal, game.getOverTotal());
 
-            if (linesChanged) {
+            if (linesChanged && game.getId() != null) {
                 OddsHistory newOdds = new OddsHistory();
                 newOdds.setGameId(game.getId());
                 newOdds.setHomeSpread(game.getHomeSpread());
@@ -363,7 +375,52 @@ public class GameSyncService {
 
         gameRepo.saveAll(gamesToSaveMap.values());
         oddsHistoryRepo.saveAll(historyToSaveList);
-        System.out.println("✅ Saved " + gamesToSaveMap.size() + " games and logged " + historyToSaveList.size() + " line movements for " + sport);
+        System.out.println("✅ Saved " + gamesToSaveMap.size() + " unique games and logged " + historyToSaveList.size() + " line movements for " + sport);
+    }
+
+    private boolean isSameMatchup(Game existing, String baseEventId, String sport, String homeTeam, String awayTeam, Instant commenceTime) {
+        if (!sport.equalsIgnoreCase(existing.getSport())) return false;
+
+        // Direct ID match
+        if (existing.getId() != null && getBaseEventId(existing.getId()).equalsIgnoreCase(baseEventId)) {
+            return true;
+        }
+
+        // Canonical string comparison (strip special characters & lowercase)
+        String cleanExHome = normalizeForMatching(existing.getHomeTeam());
+        String cleanExAway = normalizeForMatching(existing.getAwayTeam());
+        String cleanNewHome = normalizeForMatching(homeTeam);
+        String cleanNewAway = normalizeForMatching(awayTeam);
+
+        boolean teamsMatch = (cleanExHome.equals(cleanNewHome) && cleanExAway.equals(cleanNewAway)) ||
+                (cleanExHome.equals(cleanNewAway) && cleanExAway.equals(cleanNewHome));
+
+        if (!teamsMatch) return false;
+
+        // If times are present, ensure they are within 48 hours of each other to handle rescheduling/buckets
+        if (existing.getCommenceTime() != null && commenceTime != null) {
+            long hoursDiff = Math.abs(Duration.between(existing.getCommenceTime(), commenceTime).toHours());
+            return hoursDiff <= 48;
+        }
+
+        return true;
+    }
+
+    private String buildCanonicalMatchupKey(String sport, String homeTeam, String awayTeam, Instant commenceTime) {
+        String h = normalizeForMatching(homeTeam);
+        String a = normalizeForMatching(awayTeam);
+        String date = "";
+        if (commenceTime != null) {
+            date = commenceTime.atZone(ZoneId.of("America/Los_Angeles")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        }
+        // Alphabetical ordering of teams prevents home/away order differences from creating new keys
+        String pair = h.compareTo(a) < 0 ? h + "_vs_" + a : a + "_vs_" + h;
+        return sport.toLowerCase() + "_" + pair + "_" + date;
+    }
+
+    private String normalizeForMatching(String teamName) {
+        if (teamName == null) return "";
+        return teamName.toLowerCase().replaceAll("[^a-z0-9]", "");
     }
 
     public void buildLogoCache(JsonNode cfbdTeamsArray) {
@@ -402,7 +459,6 @@ public class GameSyncService {
 
         String cleanName = oddsApiTeamName.trim().toLowerCase();
 
-        // 1. NFL Logos
         if ("NFL".equalsIgnoreCase(sport)) {
             if (cleanName.equals("arizona") || cleanName.equals("az cardinals") || cleanName.equals("ari cardinals")) {
                 return "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png";
@@ -412,68 +468,39 @@ public class GameSyncService {
             }
         }
 
-        // 2. Direct FCS Fallbacks (Returns immediately!)
-        if (DIRECT_LOGO_FALLBACKS != null && DIRECT_LOGO_FALLBACKS.containsKey(cleanName)) {
+        if (DIRECT_LOGO_FALLBACKS.containsKey(cleanName)) {
             return DIRECT_LOGO_FALLBACKS.get(cleanName);
         }
 
-        // 3. Check CFBD cache with name mapping
         String mappedName = MANUAL_OVERRIDES.getOrDefault(cleanName, cleanName);
-        String url = logoCache.get(mappedName);
+        return logoCache.get(mappedName);
+    }
 
-        if (url == null) {
-            System.out.println("❌ CACHE MISS: Odds API handed us -> '" + oddsApiTeamName + "' for sport: " + sport);
+    private String getBaseEventId(String sharpApiId) {
+        if (sharpApiId == null) return null;
+        int bIndex = sharpApiId.lastIndexOf("_b");
+        if (bIndex > 0) {
+            return sharpApiId.substring(0, bIndex);
         }
-
-        return url;
+        return sharpApiId;
     }
 
-    private String normalizeTeamForLogo(String sport, String rawTeamName) {
-        if (rawTeamName == null) return "";
-        String team = rawTeamName.trim().toLowerCase();
-
-        if (sport != null && sport.toLowerCase().contains("nfl")) {
-            if (team.contains("arizona") || team.contains("cardinals") || team.equals("ari")) {
-                return "Arizona Cardinals";
-            }
-        } else {
-            if (team.contains("miami") && !team.contains("ohio")) {
-                return "Miami";
-            }
-        }
-
-        return rawTeamName;
-    }
-
-    private String getNflLogo(String teamName) {
-        Map<String, String> nflLogos = new HashMap<>();
-
-        nflLogos.put("Pittsburgh Steelers", "https://a.espncdn.com/i/teamlogos/nfl/500/pit.png");
-        nflLogos.put("Kansas City Chiefs", "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png");
-        nflLogos.put("San Francisco 49ers", "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png");
-        nflLogos.put("Baltimore Ravens", "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png");
-        nflLogos.put("Los Angeles Rams", "https://a.espncdn.com/i/teamlogos/nfl/500/lar.png");
-        nflLogos.put("Los Angeles Chargers", "https://a.espncdn.com/i/teamlogos/nfl/500/lac.png");
-
-        return nflLogos.getOrDefault(teamName, "https://cdn-icons-png.flaticon.com/512/1199/1199155.png");
-    }
-
-    public java.util.List<com.pickem.app.model.Game> getGamesForSportAndWeekFromDb(String sport, int weekNumber) {
-        java.util.List<com.pickem.app.model.Game> allGames = gameRepo.findAll();
+    public List<Game> getGamesForSportAndWeekFromDb(String sport, int weekNumber) {
+        List<Game> allGames = gameRepo.findAll();
 
         java.time.ZonedDateTime week1Start = "NFL".equalsIgnoreCase(sport)
                 ? java.time.ZonedDateTime.of(2026, 9, 8, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"))
                 : java.time.ZonedDateTime.of(2026, 8, 30, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
 
-        java.time.Instant windowStart = week1Start.plusDays((weekNumber - 1) * 7L).toInstant();
-        java.time.Instant windowEnd = week1Start.plusDays(weekNumber * 7L).toInstant();
+        Instant windowStart = week1Start.plusDays((weekNumber - 1) * 7L).toInstant();
+        Instant windowEnd = week1Start.plusDays(weekNumber * 7L).toInstant();
 
         return allGames.stream()
                 .filter(g -> sport.equalsIgnoreCase(g.getSport()))
                 .filter(g -> g.getCommenceTime() != null &&
                         !g.getCommenceTime().isBefore(windowStart) &&
                         g.getCommenceTime().isBefore(windowEnd))
-                .sorted(java.util.Comparator.comparing(com.pickem.app.model.Game::getCommenceTime))
+                .sorted(Comparator.comparing(Game::getCommenceTime))
                 .toList();
     }
 }
