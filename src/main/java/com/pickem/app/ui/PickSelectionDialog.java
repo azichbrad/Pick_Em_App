@@ -68,22 +68,46 @@ public class PickSelectionDialog extends Dialog {
         List<Game> fetchedGames = gameSyncService.getGamesForSportAndWeekFromDb(sport, weekNumber);
         this.games = fetchedGames != null ? fetchedGames : List.of();
 
-        getElement().setAttribute("theme", "dark");
-        getElement().getClassList().add("pick-dialog-overlay");
+        // Pass both dark mode and our custom mobile fullscreen trigger
+        getElement().setAttribute("theme", "dark fullscreen-mobile");
 
         setHeaderTitle("Select Pick for " + player.getName() + " (Slot " + slotNumber + ")");
+
+        // Let the CSS media query handle mobile expansion natively
         setWidth("100%");
         setMaxWidth("560px");
-        setHeight("740px");
+        setMaxHeight("92vh");
 
         gameListContainer.setSizeFull();
-        gameListContainer.getStyle().set("overflow-y", "auto");
-        gameListContainer.getStyle().set("padding-right", "2px");
-        gameListContainer.getStyle().set("padding-bottom", "40px"); // Add this line
+        gameListContainer.getStyle()
+                .set("overflow-y", "auto")
+                .set("padding-right", "2px")
+                .set("padding-bottom", "40px")
+                // Enable buttery smooth native momentum scrolling on iOS/Android
+                .set("-webkit-overflow-scrolling", "touch")
+                // Prevent pulling the outer body when reaching the top/bottom of the list
+                .set("overscroll-behavior", "contain");
+
+        // Mobile responsiveness override: adapt dialog overlay when on phone viewports
+        getElement().executeJs(
+                "const isMobile = window.innerWidth <= 768;" +
+                        "if (isMobile) {" +
+                        "    this.$.overlay.$.overlay.style.width = '100vw';" +
+                        "    this.$.overlay.$.overlay.style.maxWidth = '100vw';" +
+                        "    this.$.overlay.$.overlay.style.height = '100dvh';" +
+                        "    this.$.overlay.$.overlay.style.maxHeight = '100dvh';" +
+                        "    this.$.overlay.$.overlay.style.margin = '0';" +
+                        "    this.$.overlay.$.overlay.style.borderRadius = '0';" +
+                        "    this.$.overlay.$.content.style.padding = '12px 12px 0 12px';" +
+                        "    this.$.overlay.$.content.style.height = '100%';" +
+                        "    this.$.overlay.$.content.style.display = 'flex';" +
+                        "    this.$.overlay.$.content.style.flexDirection = 'column';" +
+                        "}"
+        );
 
         this.teamDataMap = sport.equals("NCAAF") ? conferenceService.getTeamDataMap() : Map.of();
 
-// 1. Horizontal Scrollable Tabs
+        // 1. Horizontal Scrollable Tabs
         com.vaadin.flow.component.tabs.Tabs conferenceTabs = new com.vaadin.flow.component.tabs.Tabs();
         conferenceTabs.setWidthFull();
 
@@ -108,7 +132,7 @@ public class PickSelectionDialog extends Dialog {
             }
         }
 
-        // 2. Search field stays full width
+        // 2. Search field
         TextField searchField = new TextField();
         searchField.setPlaceholder("Search team name...");
         searchField.setClearButtonVisible(true);
@@ -134,11 +158,7 @@ public class PickSelectionDialog extends Dialog {
         filterBar.setWidthFull();
         filterBar.setPadding(false);
         filterBar.setSpacing(true);
-        filterBar.getStyle().set("margin-bottom", "10px");
-
-        gameListContainer.setSizeFull();
-        gameListContainer.getStyle().set("overflow-y", "auto");
-        gameListContainer.getStyle().set("padding-right", "2px");
+        filterBar.getStyle().set("margin-bottom", "6px").set("flex-shrink", "0");
 
         renderGames("All", "", player, slotNumber, sport, weekNumber, onPickSaved);
 
@@ -146,6 +166,7 @@ public class PickSelectionDialog extends Dialog {
         dialogLayout.setPadding(false);
         dialogLayout.setSpacing(false);
         dialogLayout.setSizeFull();
+        dialogLayout.expand(gameListContainer); // Forces the games list to claim all vertical space
 
         add(dialogLayout);
 
