@@ -84,7 +84,26 @@ public class GameSyncService {
             Map.entry("albany", "ualbany"),
             Map.entry("citadel bulldogs", "the citadel"),
             Map.entry("nicholls state colonels", "nicholls"),
-            Map.entry("southeastern louisiana lions", "southeastern louisiana")
+            Map.entry("southeastern louisiana lions", "southeastern louisiana"),
+            // Common FanDuel / SharpAPI FBS Naming Mismatches
+            Map.entry("brigham young", "byu"),
+            Map.entry("brigham young cougars", "byu"),
+            Map.entry("notre dame fighting irish", "notre dame"),
+            Map.entry("ole miss", "mississippi"),
+            Map.entry("ole miss rebels", "mississippi"),
+            Map.entry("pitt", "pittsburgh"),
+            Map.entry("pitt panthers", "pittsburgh"),
+            Map.entry("southern cal", "usc"),
+            Map.entry("southern california", "usc"),
+            Map.entry("central florida", "ucf"),
+            Map.entry("florida intl", "fiu"),
+            Map.entry("florida international", "fiu"),
+            Map.entry("massachusetts", "umass"),
+            Map.entry("massachusetts minutemen", "umass"),
+            Map.entry("connecticut", "uconn"),
+            Map.entry("connecticut huskies", "uconn"),
+            Map.entry("texas christian", "tcu"),
+            Map.entry("southern methodist", "smu")
     );
 
     private static final Map<String, String> DIRECT_LOGO_FALLBACKS = Map.of(
@@ -190,6 +209,118 @@ public class GameSyncService {
             overallRecord.setLosses(overallLosses);
             overallRecord.setPushes(overallPushes);
             playerRecordRepo.save(overallRecord);
+        }
+    }
+
+    @Scheduled(cron = "0 0 * * * *") // Runs automatically at minute 0 of every hour
+    @Transactional
+    public void gradeCompletedGamesHourly() {
+        System.out.println("⏱ Running hourly grading check...");
+
+        // 1. Fetch all picks and isolate the ones that are still PENDING
+        List<Pick> allPicks = pickRepo.findAll();
+        List<Pick> pendingPicks = allPicks.stream()
+                .filter(p -> "PENDING".equals(p.getStatus()) || p.getStatus() == null)
+                .toList();
+
+        if (pendingPicks.isEmpty()) {
+            return;
+        }
+
+        List<Pick> gradedPicks = new ArrayList<>();
+
+        // 2. Grade picks ONLY if their game is completed and has real final scores
+        for (Pick pick : pendingPicks) {
+            if (pick.getGameId() == null) continue;
+
+            Game game = gameRepo.findById(pick.getGameId()).orElse(null);
+
+            // Guardrail: Skip if game isn't over or lacks score data
+            if (game == null || !Boolean.TRUE.equals(game.getCompleted()) || game.getAwayScore() == null || game.getHomeScore() == null) {
+                continue;
+            }
+
+            double lockedPoint = pick.getLockedPoint();
+            String status = "PENDING";
+
+            if (pick.getSelection().contains(" O ") || pick.getSelection().contains(" U ")) {
+                int totalPoints = game.getAwayScore() + game.getHomeScore();
+                boolean isOver = pick.getSelection().contains(" O ");
+
+                if (totalPoints > lockedPoint) status = isOver ? "WIN" : "LOSS";
+                else if (totalPoints < lockedPoint) status = isOver ? "LOSS" : "WIN";
+                else status = "PUSH";
+            } else {
+                boolean isAway = pick.getSelection().startsWith(game.getAwayTeam());
+                double margin = isAway ? (game.getAwayScore() - game.getHomeScore())
+                        : (game.getHomeScore() - game.getAwayScore());
+
+                if (margin + lockedPoint > 0) status = "WIN";
+                else if (margin + lockedPoint < 0) status = "LOSS";
+                else status = "PUSH";
+            }
+
+            pick.setStatus(status);
+            gradedPicks.add(pick);
+        }
+
+        if (gradedPicks.isEmpty()) {
+            return;
+        }
+
+        pickRepo.saveAll(gradedPicks);
+        System.out.println("✅ Graded " + gradedPicks.size() + " completed picks.");
+
+        // 3. Update player records cleanly for anyone who had a pick graded this hour
+        Map<Player, List<Pick>> picksByPlayer = allPicks.stream()
+                .filter(p -> gradedPicks.stream().anyMatch(gp -> gp.getPlayer().getId().equals(p.getPlayer().getId())))
+                .collect(Collectors.groupingBy(Pick::getPlayer));
+
+        for (Map.Entry<Player, List<Pick>> entry : picksByPlayer.entrySet()) {
+            Player player = entry.getKey();
+            List<Pick> playerPicks = entry.getValue();
+
+            Map<String, List<Pick>> picksBySport = playerPicks.stream()
+                    .filter(p -> p.getSport() != null)
+                    .collect(Collectors.groupingBy(Pick::getSport));
+
+            for (Map.Entry<String, List<Pick>> sportEntry : picksBySport.entrySet()) {
+                String sport = sportEntry.getKey();
+                List<Pick> sportPicks = sportEntry.getValue();
+
+                // Overall Season Record (Week 0)
+                int overallWins = (int) sportPicks.stream().filter(p -> "WIN".equals(p.getStatus())).count();
+                int overallLosses = (int) sportPicks.stream().filter(p -> "LOSS".equals(p.getStatus())).count();
+                int overallPushes = (int) sportPicks.stream().filter(p -> "PUSH".equals(p.getStatus())).count();
+
+                PlayerRecord overallRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, 0)
+                        .orElse(new PlayerRecord(player, sport, 0));
+                overallRecord.setWins(overallWins);
+                overallRecord.setLosses(overallLosses);
+                overallRecord.setPushes(overallPushes);
+                playerRecordRepo.save(overallRecord);
+
+                // Individual Weekly Records
+                Map<Integer, List<Pick>> picksByWeek = sportPicks.stream()
+                        .filter(p -> p.getWeekNumber() != null)
+                        .collect(Collectors.groupingBy(Pick::getWeekNumber));
+
+                for (Map.Entry<Integer, List<Pick>> weekEntry : picksByWeek.entrySet()) {
+                    int week = weekEntry.getKey();
+                    List<Pick> weekPicks = weekEntry.getValue();
+
+                    int weekWins = (int) weekPicks.stream().filter(p -> "WIN".equals(p.getStatus())).count();
+                    int weekLosses = (int) weekPicks.stream().filter(p -> "LOSS".equals(p.getStatus())).count();
+                    int weekPushes = (int) weekPicks.stream().filter(p -> "PUSH".equals(p.getStatus())).count();
+
+                    PlayerRecord weeklyRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, week)
+                            .orElse(new PlayerRecord(player, sport, week));
+                    weeklyRecord.setWins(weekWins);
+                    weeklyRecord.setLosses(weekLosses);
+                    weeklyRecord.setPushes(weekPushes);
+                    playerRecordRepo.save(weeklyRecord);
+                }
+            }
         }
     }
 
