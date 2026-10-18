@@ -157,6 +157,7 @@ public class OddsService {
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("x-rapidapi-key", highlightlyApiKey);
+        headers.set("x-rapidapi-host", "american-football.highlightly.net");
         headers.set("Accept", "application/json");
         HttpEntity<String> entity = new HttpEntity<>(headers);
 
