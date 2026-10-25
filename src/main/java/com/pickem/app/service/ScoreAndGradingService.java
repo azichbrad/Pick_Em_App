@@ -66,6 +66,17 @@ public class ScoreAndGradingService {
         for (ScoreDTO apiScore : apiScores) {
             if (Boolean.TRUE.equals(apiScore.completed()) && apiScore.scores() != null && apiScore.scores().size() >= 2) {
                 for (Game dbGame : pendingGames) {
+
+                    // 🛑 GUARDRAIL 1: Ensure the sport matches exactly (prevents College "Eagles" grading NFL "Eagles")
+                    if (apiScore.sport_key() != null && dbGame.getSport() != null && !apiScore.sport_key().equalsIgnoreCase(dbGame.getSport())) {
+                        continue;
+                    }
+
+                    // 🛑 GUARDRAIL 2: Never accept final scores for games that haven't kicked off yet
+                    if (dbGame.getCommenceTime() != null && dbGame.getCommenceTime().isAfter(java.time.Instant.now())) {
+                        continue;
+                    }
+
                     // Check if both teams match (accounting for neutral-site swaps)
                     boolean directMatch = isTeamMatch(dbGame.getHomeTeam(), apiScore.homeTeam()) &&
                             isTeamMatch(dbGame.getAwayTeam(), apiScore.awayTeam());
@@ -229,6 +240,40 @@ public class ScoreAndGradingService {
         if (s.contains("hawaii")) return "hawaii";
         if (s.equals("pitt") || s.contains("pittsburgh")) return "pittsburgh";
         if (s.equals("usc") || s.contains("southern california")) return "usc";
+
+        // NFL aliases & city/franchise bridges
+        if (s.contains("cardinals") || s.equals("ari")) return "arizona cardinals";
+        if (s.contains("falcons") || s.equals("atl")) return "atlanta falcons";
+        if (s.contains("ravens") || s.equals("bal")) return "baltimore ravens";
+        if (s.contains("bills") || s.equals("buf")) return "buffalo bills";
+        if (s.contains("panthers") || s.equals("car")) return "carolina panthers";
+        if (s.contains("bears") || s.equals("chi")) return "chicago bears";
+        if (s.contains("bengals") || s.equals("cin")) return "cincinnati bengals";
+        if (s.contains("browns") || s.equals("cle")) return "cleveland browns";
+        if (s.contains("cowboys") || s.equals("dal")) return "dallas cowboys";
+        if (s.contains("broncos") || s.equals("den")) return "denver broncos";
+        if (s.contains("lions") || s.equals("det")) return "detroit lions";
+        if (s.contains("packers") || s.equals("gb")) return "green bay packers";
+        if (s.contains("texans") || s.equals("hou")) return "houston texans";
+        if (s.contains("colts") || s.equals("ind")) return "indianapolis colts";
+        if (s.contains("jaguars") || s.equals("jax")) return "jacksonville jaguars";
+        if (s.contains("chiefs") || s.equals("kc")) return "kansas city chiefs";
+        if (s.contains("raiders") || s.equals("lv")) return "las vegas raiders";
+        if (s.contains("chargers") || s.equals("lac")) return "los angeles chargers";
+        if (s.contains("rams") || s.equals("lar")) return "los angeles rams";
+        if (s.contains("dolphins") || s.equals("mia")) return "miami dolphins";
+        if (s.contains("vikings") || s.equals("min")) return "minnesota vikings";
+        if (s.contains("patriots") || s.equals("ne")) return "new england patriots";
+        if (s.contains("saints") || s.equals("no")) return "new orleans saints";
+        if (s.contains("giants") || s.equals("nyg")) return "new york giants";
+        if (s.contains("jets") || s.equals("nyj")) return "new york jets";
+        if (s.contains("eagles") || s.equals("phi")) return "philadelphia eagles";
+        if (s.contains("steelers") || s.equals("pit")) return "pittsburgh steelers";
+        if (s.contains("49ers") || s.contains("niners") || s.equals("sf")) return "san francisco 49ers";
+        if (s.contains("seahawks") || s.equals("sea")) return "seattle seahawks";
+        if (s.contains("buccaneers") || s.contains("bucs") || s.equals("tb")) return "tampa bay buccaneers";
+        if (s.contains("titans") || s.equals("ten")) return "tennessee titans";
+        if (s.contains("commanders") || s.equals("was")) return "washington commanders";
 
         return s;
     }
