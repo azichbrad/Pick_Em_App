@@ -166,17 +166,12 @@ public class ScoreAndGradingService {
     private void updatePlayerRecords(Player player, String sport, int weekNumber) {
         List<Pick> allSportPicks = pickRepository.findByPlayerIdAndSport(player.getId(), sport);
 
-        int overallWins = 0, overallLosses = 0, overallPushes = 0;
         int weeklyWins = 0, weeklyLosses = 0, weeklyPushes = 0;
 
         for (Pick p : allSportPicks) {
             boolean isWin = "WIN".equals(p.getStatus());
             boolean isLoss = "LOSS".equals(p.getStatus());
             boolean isPush = "PUSH".equals(p.getStatus());
-
-            if (isWin) overallWins++;
-            if (isLoss) overallLosses++;
-            if (isPush) overallPushes++;
 
             if (p.getWeekNumber() != null && p.getWeekNumber() == weekNumber) {
                 if (isWin) weeklyWins++;
@@ -185,19 +180,15 @@ public class ScoreAndGradingService {
             }
         }
 
+        // Only save the individual weekly record.
+        // Do NOT save an overall record to week_number = 0, as the UI already sums the weekly rows.
         PlayerRecord weeklyRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, weekNumber)
                 .orElse(new PlayerRecord(player, sport, weekNumber));
+
         weeklyRecord.setWins(weeklyWins);
         weeklyRecord.setLosses(weeklyLosses);
         weeklyRecord.setPushes(weeklyPushes);
         playerRecordRepo.save(weeklyRecord);
-
-        PlayerRecord overallRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, 0)
-                .orElse(new PlayerRecord(player, sport, 0));
-        overallRecord.setWins(overallWins);
-        overallRecord.setLosses(overallLosses);
-        overallRecord.setPushes(overallPushes);
-        playerRecordRepo.save(overallRecord);
     }
 
     // Bidirectional normalizer and fuzzy matcher
