@@ -60,11 +60,12 @@ public class ScoreAndGradingService {
         }
 
         System.out.println("🔍 Processing " + apiScores.size() + " incoming API scores...");
-        List<Game> pendingGames = gameRepository.findByCompletedFalse();
+        // 🛑 FIX: Pull ALL games so we don't accidentally ignore completed games with pending picks
+        List<Game> allGames = gameRepository.findAll();
 
         for (ScoreDTO apiScore : apiScores) {
             if (Boolean.TRUE.equals(apiScore.completed()) && apiScore.scores() != null && apiScore.scores().size() >= 2) {
-                for (Game dbGame : pendingGames) {
+                for (Game dbGame : allGames) {
 
                     // 🛑 GUARDRAIL 1: Ensure the sport matches exactly (prevents College "Eagles" grading NFL "Eagles")
                     if (apiScore.sport_key() != null && dbGame.getSport() != null && !apiScore.sport_key().equalsIgnoreCase(dbGame.getSport())) {
