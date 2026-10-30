@@ -24,7 +24,8 @@ public class AdminController {
 
     @GetMapping("/sync-scores")
     public String syncScores() {
-        gradingService.hourlyActiveSync();
+        // Change from hourlyActiveSync() to nightlyDeepSync() to use the 10-day lookback
+        gradingService.nightlyDeepSync();
         return "Background score sync completed!";
     }
 

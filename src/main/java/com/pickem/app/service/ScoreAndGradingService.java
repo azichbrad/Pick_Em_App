@@ -11,7 +11,6 @@ import com.pickem.app.repository.PlayerRecordRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import jakarta.annotation.PostConstruct;
 
 import java.util.List;
 
@@ -30,20 +29,20 @@ public class ScoreAndGradingService {
         this.playerRecordRepo = playerRecordRepo;
     }
 
-    // 1. LIGHTWEIGHT HOURLY SYNC: Only looks back 1 day (Uses ~4-6 requests per hour)
+    // 1. LIGHTWEIGHT HOURLY SYNC: Increased lookback to 4 days to catch API delays
     @Scheduled(cron = "0 0 * * * *")
     public void hourlyActiveSync() {
         System.out.println("Starting lightweight hourly score sync...");
 
-        // 1-day lookback grabs today and yesterday's games without burning limits
-        processScores(oddsService.getCompletedScores("americanfootball_ncaaf", 1));
-        processScores(oddsService.getCompletedScores("americanfootball_nfl", 1));
+        // 4-day lookback ensures weekend stragglers are caught without hitting limits
+        processScores(oddsService.getCompletedScores("americanfootball_ncaaf", 4));
+        processScores(oddsService.getCompletedScores("americanfootball_nfl", 4));
 
         System.out.println("Hourly sync completed.");
     }
 
-    // 2. DEEP NIGHTLY SYNC: Runs once a day at 2:00 AM to catch stragglers (Uses ~22 requests)
-    @Scheduled(cron = "0 0 2 * * *")
+    // 2. DEEP NIGHTLY SYNC: Anchored to Pacific Time so it actually runs at 2:00 AM locally
+    @Scheduled(cron = "0 0 2 * * *", zone = "America/Los_Angeles")
     public void nightlyDeepSync() {
         System.out.println("Starting heavy nightly deep score sync...");
 
