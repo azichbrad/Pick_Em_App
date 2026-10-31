@@ -29,24 +29,23 @@ public class ScoreAndGradingService {
         this.playerRecordRepo = playerRecordRepo;
     }
 
-    // 1. LIGHTWEIGHT HOURLY SYNC: Increased lookback to 4 days to catch API delays
+    // 1. LIGHTWEIGHT HOURLY SYNC: 1-day lookback costs 48 requests per day
     @Scheduled(cron = "0 0 * * * *")
     public void hourlyActiveSync() {
         System.out.println("Starting lightweight hourly score sync...");
 
-        // 4-day lookback ensures weekend stragglers are caught without hitting limits
-        processScores(oddsService.getCompletedScores("americanfootball_ncaaf", 4));
-        processScores(oddsService.getCompletedScores("americanfootball_nfl", 4));
+        // Reverted to 1 to stay under the 100 request daily limit
+        processScores(oddsService.getCompletedScores("americanfootball_ncaaf", 1));
+        processScores(oddsService.getCompletedScores("americanfootball_nfl", 1));
 
         System.out.println("Hourly sync completed.");
     }
 
-    // 2. DEEP NIGHTLY SYNC: Anchored to Pacific Time so it actually runs at 2:00 AM locally
+    // 2. DEEP NIGHTLY SYNC: 10-day lookback costs 20 requests per day
     @Scheduled(cron = "0 0 2 * * *", zone = "America/Los_Angeles")
     public void nightlyDeepSync() {
         System.out.println("Starting heavy nightly deep score sync...");
 
-        // 10-day lookback to catch weird API delays, only costs limits once a day!
         processScores(oddsService.getCompletedScores("americanfootball_ncaaf", 10));
         processScores(oddsService.getCompletedScores("americanfootball_nfl", 10));
 
