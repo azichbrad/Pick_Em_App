@@ -14,7 +14,9 @@ public record GameOddsDTO(
         @JsonProperty("line") Double line,
         @JsonProperty("odds_american") Integer oddsAmerican,
         @JsonProperty("is_main_line") Boolean isMainLine,
+        @JsonProperty("team_side") String teamSide,
         @JsonProperty("is_alternate_line") Boolean isAlternateLine
+
 ) {
     public Instant eventStartTime() {
         if (rawEventStartTime == null || rawEventStartTime.isBlank()) {

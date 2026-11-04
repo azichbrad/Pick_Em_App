@@ -334,12 +334,13 @@ public class GameSyncService {
                     String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam().trim().toLowerCase() : "";
 
                     if ("point_spread".equalsIgnoreCase(odd.marketType())) {
-                        if (selection.equalsIgnoreCase(awayTeam) || awayTeam.contains(selection) || selection.contains(awayTeam)) {
-                            game.setAwaySpread(odd.line());
-                            game.setHomeSpread(-odd.line());
-                        } else if (selection.equalsIgnoreCase(homeTeam) || homeTeam.contains(selection) || selection.contains(homeTeam)) {
+                        // Check the direct team_side flag from SharpAPI
+                        if ("home".equalsIgnoreCase(odd.teamSide())) {
                             game.setHomeSpread(odd.line());
                             game.setAwaySpread(-odd.line());
+                        } else if ("away".equalsIgnoreCase(odd.teamSide())) {
+                            game.setAwaySpread(odd.line());
+                            game.setHomeSpread(-odd.line());
                         }
                     } else if ("total_points".equalsIgnoreCase(odd.marketType())) {
                         game.setOverTotal(odd.line());

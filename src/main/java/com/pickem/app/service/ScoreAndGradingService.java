@@ -29,26 +29,21 @@ public class ScoreAndGradingService {
         this.playerRecordRepo = playerRecordRepo;
     }
 
-    // 1. LIGHTWEIGHT HOURLY SYNC: 1-day lookback costs 48 requests per day
+    // 1. LIGHTWEIGHT HOURLY SYNC
     @Scheduled(cron = "0 0 * * * *")
     public void hourlyActiveSync() {
         System.out.println("Starting lightweight hourly score sync...");
-
-        // Reverted to 1 to stay under the 100 request daily limit
-        processScores(oddsService.getCompletedScores("americanfootball_ncaaf", 1));
-        processScores(oddsService.getCompletedScores("americanfootball_nfl", 1));
-
+        processScores(oddsService.getCompletedScores("NCAAF", 1));
+        processScores(oddsService.getCompletedScores("NFL", 1));
         System.out.println("Hourly sync completed.");
     }
 
-    // 2. DEEP NIGHTLY SYNC: 10-day lookback costs 20 requests per day
+    // 2. DEEP NIGHTLY SYNC
     @Scheduled(cron = "0 0 2 * * *", zone = "America/Los_Angeles")
     public void nightlyDeepSync() {
         System.out.println("Starting heavy nightly deep score sync...");
-
-        processScores(oddsService.getCompletedScores("americanfootball_ncaaf", 10));
-        processScores(oddsService.getCompletedScores("americanfootball_nfl", 10));
-
+        processScores(oddsService.getCompletedScores("NCAAF", 10));
+        processScores(oddsService.getCompletedScores("NFL", 10));
         System.out.println("Nightly deep sync completed.");
     }
 
