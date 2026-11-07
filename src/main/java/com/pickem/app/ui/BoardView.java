@@ -1,8 +1,10 @@
 package com.pickem.app.ui;
 
+import com.pickem.app.model.LeagueMember;
 import com.pickem.app.model.Pick;
 import com.pickem.app.model.Player;
 import com.pickem.app.model.PlayerRecord;
+import com.pickem.app.repository.LeagueMemberRepository;
 import com.pickem.app.repository.PickRepository;
 import com.pickem.app.repository.PlayerRecordRepository;
 import com.pickem.app.repository.PlayerRepository;
@@ -17,7 +19,10 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.tabs.TabSheet;
 import com.vaadin.flow.component.tabs.TabSheetVariant;
+import com.vaadin.flow.router.BeforeEnterEvent;
+import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Route;
+import com.vaadin.flow.server.VaadinSession;
 import com.vaadin.flow.theme.lumo.Lumo;
 import jakarta.annotation.security.PermitAll;
 import org.springframework.security.core.Authentication;
@@ -26,10 +31,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import java.util.List;
 import java.util.stream.IntStream;
 
-@Route("board")
+@Route(value = "board", layout = MainLayout.class)
 @CssImport("./styles.css")
 @PermitAll
-public class BoardView extends VerticalLayout {
+public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
     private final PlayerRepository playerRepo;
     private final PickRepository pickRepo;
@@ -39,19 +44,22 @@ public class BoardView extends VerticalLayout {
     private final PlayerRecordRepository playerRecordRepo;
     private final PickService pickService;
     private final ParlayService parlayService;
+    private final LeagueMemberRepository leagueMemberRepo; // 1. Added new repository
 
     public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService,
                      ConferenceService conferenceService,
-                     GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo, PlayerRecordRepository playerRecordRepo1,
-                     PickRepository pickRepository, PickService pickService, ParlayService parlayService) {
+                     GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo,
+                     PickService pickService, ParlayService parlayService,
+                     LeagueMemberRepository leagueMemberRepo) {
         this.playerRepo = playerRepo;
         this.pickRepo = pickRepo;
         this.oddsService = oddsService;
         this.conferenceService = conferenceService;
         this.gameSyncService = gameSyncService;
-        this.playerRecordRepo = playerRecordRepo1;
+        this.playerRecordRepo = playerRecordRepo;
         this.parlayService = parlayService;
         this.pickService = pickService;
+        this.leagueMemberRepo = leagueMemberRepo;
 
         getElement().setAttribute("theme", Lumo.DARK);
         setSizeFull();
@@ -61,12 +69,20 @@ public class BoardView extends VerticalLayout {
         renderTabs();
     }
 
+    @Override
+    public void beforeEnter(BeforeEnterEvent event) {
+        // 2. Security Check: If no league is selected, kick them back to the dashboard
+        Long currentLeagueId = (Long) VaadinSession.getCurrent().getAttribute("league_id");
+        if (currentLeagueId == null) {
+            event.forwardTo(DashboardView.class);
+        }
+    }
+
     private void renderTabs() {
         removeAll();
 
         TabSheet tabSheet = new TabSheet();
         tabSheet.setSizeFull();
-        // 1. Remove LUMO_TABS_CENTERED so the suffix component works properly on mobile
         tabSheet.addThemeVariants(TabSheetVariant.LUMO_BORDERED);
 
         Image collegeLogo = new Image("/images/cfp.png", "College Football Logo");
@@ -74,7 +90,6 @@ public class BoardView extends VerticalLayout {
         collegeLogo.setHeight("20px");
         collegeLogo.getStyle().set("margin-right", "8px");
 
-        // 2. Shorten the text from "College Football" to "CFB" to save horizontal space
         HorizontalLayout collegeTabLabel = new HorizontalLayout(collegeLogo, new Span("CFB"));
         collegeTabLabel.setAlignItems(Alignment.CENTER);
         collegeTabLabel.setSpacing(false);
@@ -89,14 +104,12 @@ public class BoardView extends VerticalLayout {
         nflTabLabel.setSpacing(false);
 
         Button groupParlayBtn = new Button();
-        // 3. Remove absolute positioning; add a small right margin for padding
         groupParlayBtn.getStyle().set("margin-right", "8px");
 
         int[] currentWeeks = { calculateCurrentWeek("NCAAF"), calculateCurrentWeek("NFL") };
         String[] currentTab = { "NCAAF" };
 
         Runnable updateParlayBtnState = () -> {
-            // CFB Week 6 aligns with NFL Week 5 (NFL Week + 1 = CFB Master Week)
             int masterWeek = currentTab[0].equals("NCAAF") ? currentWeeks[0] : (currentWeeks[1] + 1);
             int lockedCount = parlayService.getLockedPickCount(masterWeek);
             String slateLabel = getSlateSundayForWeek(masterWeek);
@@ -120,7 +133,6 @@ public class BoardView extends VerticalLayout {
             dialog.open();
         });
 
-        // 5. Use Vaadin's native suffix component layout now that CENTERED is removed
         tabSheet.setSuffixComponent(groupParlayBtn);
 
         com.vaadin.flow.component.tabs.Tab cfbTab = tabSheet.add(collegeTabLabel, createTabContent("NCAAF", week -> {
@@ -139,8 +151,6 @@ public class BoardView extends VerticalLayout {
         });
 
         updateParlayBtnState.run();
-
-        // 6. Only add the tabSheet; the button is now nested inside it
         add(tabSheet);
     }
 
@@ -201,8 +211,6 @@ public class BoardView extends VerticalLayout {
                 prevButton.setEnabled(val > minWeek);
                 nextButton.setEnabled(val < maxWeek);
                 renderPlayerColumns(boardGrid, sport, val);
-
-                // Fire the callback to update the global parlay button
                 onWeekChanged.accept(val);
             }
         });
@@ -215,21 +223,27 @@ public class BoardView extends VerticalLayout {
         long startTime = System.currentTimeMillis();
         boardGrid.removeAll();
 
-        // 1. Fetch all players to ensure everyone appears on the leaderboard
-        List<Player> allPlayers = playerRepo.findAll();
+        // 3. Multi-Tenant Logic: Fetch only players assigned to the active league
+        Long leagueId = (Long) VaadinSession.getCurrent().getAttribute("league_id");
+        List<LeagueMember> memberships = leagueMemberRepo.findByLeagueId(leagueId);
+        List<Player> activeLeaguePlayers = new java.util.ArrayList<>(
+                memberships.stream()
+                        .map(LeagueMember::getPlayer)
+                        .toList()
+        );
 
-        // 2. Fetch all weekly records, excluding any legacy week 99 totals
         List<PlayerRecord> allWeeklyRecords = playerRecordRepo.findBySport(sport).stream()
                 .filter(r -> r.getWeekNumber() != null && r.getWeekNumber() < 90)
                 .toList();
 
-        // 3. Initialize the aggregation map with 0s for every player ID
+        // 4. Initialize aggregation map ONLY with players in the active league
         java.util.Map<Long, int[]> aggregatedMap = new java.util.HashMap<>();
-        for (Player p : allPlayers) {
+        for (Player p : activeLeaguePlayers) {
             aggregatedMap.put(p.getId(), new int[3]);
         }
 
-        // 4. Sum up all wins, losses, and pushes from the PlayerRecord ledger
+        // 5. This automatically filters out records from players not in the league
+        // because they won't exist in the aggregatedMap
         for (PlayerRecord rec : allWeeklyRecords) {
             if (rec.getPlayer() != null && aggregatedMap.containsKey(rec.getPlayer().getId())) {
                 int[] stats = aggregatedMap.get(rec.getPlayer().getId());
@@ -239,10 +253,9 @@ public class BoardView extends VerticalLayout {
             }
         }
 
-        java.util.Map<Long, Player> playerMap = allPlayers.stream()
+        java.util.Map<Long, Player> playerMap = activeLeaguePlayers.stream()
                 .collect(java.util.stream.Collectors.toMap(Player::getId, p -> p));
 
-        // 5. Construct the final leaderboard list and sort by Wins desc, then Losses asc
         List<PlayerRecord> overallRecords = aggregatedMap.entrySet().stream()
                 .map(entry -> {
                     PlayerRecord total = new PlayerRecord(playerMap.get(entry.getKey()), sport, 99);
@@ -261,10 +274,12 @@ public class BoardView extends VerticalLayout {
 
         List<PlayerRecord> weeklyRecords = playerRecordRepo.findBySportAndWeekNumber(sport, selectedWeek);
         java.util.Map<Long, PlayerRecord> weeklyRecordMap = weeklyRecords.stream()
+                .filter(r -> aggregatedMap.containsKey(r.getPlayer().getId())) // Filter weekly records by league too
                 .collect(java.util.stream.Collectors.toMap(r -> r.getPlayer().getId(), r -> r));
 
         List<Pick> weeklyPicList = pickRepo.findByWeekNumberAndSport(selectedWeek, sport);
         java.util.Map<Long, java.util.Map<Integer, Pick>> playerPicksMap = weeklyPicList.stream()
+                .filter(p -> aggregatedMap.containsKey(p.getPlayer().getId())) // Filter picks by league
                 .collect(java.util.stream.Collectors.groupingBy(
                         p -> p.getPlayer().getId(),
                         java.util.stream.Collectors.toMap(Pick::getSlotNumber, p -> p, (p1, p2) -> p1)
@@ -276,7 +291,6 @@ public class BoardView extends VerticalLayout {
 
         java.time.Instant liveCutoff = java.time.Instant.now();
 
-        // ... (Keep the rest of the UI rendering exactly the same from here down)
         HorizontalLayout leaderboardBar = new HorizontalLayout();
         leaderboardBar.setWidthFull();
         leaderboardBar.getStyle()
@@ -294,29 +308,24 @@ public class BoardView extends VerticalLayout {
         leaderboardTitle.getStyle()
                 .set("font-weight", "bold")
                 .set("color", "#38bdf8")
-                .set("white-space", "nowrap"); // Protects the title from breaking
+                .set("white-space", "nowrap");
         leaderboardBar.add(leaderboardTitle);
 
         for (PlayerRecord rec : overallRecords) {
             Span statSpan = new Span(rec.getPlayer().getName() + ": " + rec.getWins() + "W-" + rec.getLosses() + "L-" + rec.getPushes() + "P");
-            statSpan.getStyle().set("white-space", "nowrap"); // Protects the scores from breaking
+            statSpan.getStyle().set("white-space", "nowrap");
             leaderboardBar.add(statSpan);
         }
         boardGrid.add(leaderboardBar);
 
-        // 2. SIGNED-IN USER SORTING FIX (OAUTH SAFE)
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         String currentUser = "";
 
         if (auth != null) {
-            // Check if it's an OAuth2 login to grab the actual readable name
             if (auth.getPrincipal() instanceof org.springframework.security.oauth2.core.user.OAuth2User oauthUser) {
-                // Try to grab the "name" or "given_name" from Google/Github
                 currentUser = oauthUser.getAttribute("name");
                 if (currentUser == null) currentUser = oauthUser.getAttribute("given_name");
             }
-
-            // Fallback to standard auth name or email
             if (currentUser == null || currentUser.isEmpty()) {
                 currentUser = auth.getName();
             }
@@ -324,20 +333,17 @@ public class BoardView extends VerticalLayout {
 
         final String loggedInUserLower = currentUser != null ? currentUser.toLowerCase() : "";
 
-        List<Player> players = playerRepo.findAll();
-        players.sort((p1, p2) -> {
+        // Sort only the active league players
+        activeLeaguePlayers.sort((p1, p2) -> {
             String p1Name = p1.getName().toLowerCase();
             String p2Name = p2.getName().toLowerCase();
 
-            // Fuzzy match
             boolean isP1Current = !loggedInUserLower.isEmpty() && (loggedInUserLower.contains(p1Name) || p1Name.contains(loggedInUserLower));
             boolean isP2Current = !loggedInUserLower.isEmpty() && (loggedInUserLower.contains(p2Name) || p2Name.contains(loggedInUserLower));
 
-            // Force the logged-in user to the very top
             if (isP1Current && !isP2Current) return -1;
             if (!isP1Current && isP2Current) return 1;
 
-            // Otherwise, sort the rest by their weekly records
             PlayerRecord r1 = weeklyRecordMap.getOrDefault(p1.getId(), new PlayerRecord(p1, sport, selectedWeek));
             PlayerRecord r2 = weeklyRecordMap.getOrDefault(p2.getId(), new PlayerRecord(p2, sport, selectedWeek));
 
@@ -347,7 +353,7 @@ public class BoardView extends VerticalLayout {
             return Integer.compare(r1.getLosses(), r2.getLosses());
         });
 
-        for (Player player : players) {
+        for (Player player : activeLeaguePlayers) {
             VerticalLayout playerCard = new VerticalLayout();
             playerCard.setPadding(true);
             playerCard.setSpacing(true);
@@ -529,7 +535,6 @@ public class BoardView extends VerticalLayout {
     }
 
     private String getSlateSundayForWeek(int ncaafWeek) {
-        // CFB Week 0 Sunday was Aug 23, 2026
         java.time.ZonedDateTime week0Sunday = java.time.ZonedDateTime.of(2026, 8, 23, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
         return week0Sunday.plusWeeks(ncaafWeek).format(java.time.format.DateTimeFormatter.ofPattern("MMM d"));
     }
@@ -565,15 +570,12 @@ public class BoardView extends VerticalLayout {
     private String getCurrentSlateSunday() {
         java.time.ZonedDateTime now = java.time.ZonedDateTime.now(java.time.ZoneId.of("America/Los_Angeles"));
 
-        // If today is Monday, we are still wrapping up yesterday's slate.
         if (now.getDayOfWeek() == java.time.DayOfWeek.MONDAY) {
             now = now.minusDays(1);
         } else if (now.getDayOfWeek() == java.time.DayOfWeek.TUESDAY) {
-            // If it's Tuesday, the new slate begins (looking ahead to Sunday).
             now = now.plusDays(5);
         }
 
-        // Fast forward to Sunday
         while (now.getDayOfWeek() != java.time.DayOfWeek.SUNDAY) {
             now = now.plusDays(1);
         }
