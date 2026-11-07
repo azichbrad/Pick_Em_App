@@ -11,6 +11,7 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.router.RouterLayout;
 import com.vaadin.flow.router.RouterLink;
 import com.vaadin.flow.server.VaadinSession;
+import com.vaadin.flow.component.html.Image;
 
 public class MainLayout extends Div implements RouterLayout {
 
@@ -40,11 +41,14 @@ public class MainLayout extends Div implements RouterLayout {
         branding.setAlignItems(FlexComponent.Alignment.CENTER);
         branding.setSpacing(true);
 
-        H3 logo = new H3("Pick'Em");
-        logo.getStyle().set("margin", "0").set("font-size", "1.2rem").set("color", "#f8fafc");
+        // Replaced H3 text with the custom Image logo
+        Image logo = new Image("images/logo.png", "Pick'Em Logo");
+        logo.setHeight("36px"); // Adjust this to scale the logo up or down
+        logo.getStyle().set("margin", "0");
 
         String leagueName = (String) VaadinSession.getCurrent().getAttribute("league_name");
         Span leagueBadge = new Span(leagueName != null ? leagueName : "League");
+        // ... (keep the rest of your leagueBadge styling exactly the same)
         leagueBadge.getStyle()
                 .set("background-color", "#1e3a8a")
                 .set("color", "#93c5fd")

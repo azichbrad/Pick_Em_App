@@ -4,6 +4,7 @@ import com.pickem.app.model.League;
 import com.pickem.app.model.LeagueMember;
 import com.pickem.app.model.Player;
 import com.pickem.app.repository.LeagueMemberRepository;
+import com.pickem.app.repository.LeagueRepository;
 import com.pickem.app.repository.PlayerRepository;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
@@ -28,10 +29,12 @@ public class DashboardView extends VerticalLayout {
 
     private final PlayerRepository playerRepo;
     private final LeagueMemberRepository leagueMemberRepo;
+    private final LeagueRepository leagueRepo; // 1. Added LeagueRepository
 
-    public DashboardView(PlayerRepository playerRepo, LeagueMemberRepository leagueMemberRepo) {
+    public DashboardView(PlayerRepository playerRepo, LeagueMemberRepository leagueMemberRepo, LeagueRepository leagueRepo) {
         this.playerRepo = playerRepo;
         this.leagueMemberRepo = leagueMemberRepo;
+        this.leagueRepo = leagueRepo;
 
         setSizeFull();
         setAlignItems(Alignment.CENTER);
@@ -45,7 +48,14 @@ public class DashboardView extends VerticalLayout {
         header.setPadding(true);
 
         Button logoutBtn = new Button("Sign Out", e -> {
-            UI.getCurrent().getPage().setLocation("/logout");
+            // Clear Spring Security context
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+
+            // Invalidate the Vaadin session
+            com.vaadin.flow.server.VaadinSession.getCurrent().getSession().invalidate();
+
+            // Redirect to the root (forces re-authentication)
+            com.vaadin.flow.component.UI.getCurrent().getPage().setLocation("/");
         });
         logoutBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
         logoutBtn.getStyle().set("color", "#ef4444");
@@ -76,26 +86,29 @@ public class DashboardView extends VerticalLayout {
         leaguesContainer.setAlignItems(Alignment.CENTER);
         leaguesContainer.setWidthFull();
 
-        // 5. Query Database for User's Leagues
+        // 5. Query Database for User's Leagues (Auto-Provision if missing)
         Player currentPlayer = playerRepo.findByEmail(userEmail).orElse(null);
 
-        if (currentPlayer != null) {
-            List<LeagueMember> memberships = leagueMemberRepo.findByPlayerId(currentPlayer.getId());
+        if (currentPlayer == null) {
+            // This translates to supabase.from('players').insert(...) behind the scenes
+            Player newPlayer = new Player();
+            newPlayer.setName(userName);
+            newPlayer.setEmail(userEmail);
+            // newPlayer.setRole("USER"); // Uncomment if your Player model requires a default role
 
-            if (memberships.isEmpty()) {
-                Span noLeagues = new Span("You are not in any leagues yet.");
-                noLeagues.getStyle().set("color", "#94a3b8").set("margin-top", "20px");
-                leaguesContainer.add(noLeagues);
-            } else {
-                for (LeagueMember membership : memberships) {
-                    leaguesContainer.add(createLeagueCard(membership.getLeague()));
-                }
-            }
+            currentPlayer = playerRepo.save(newPlayer);
+        }
+
+        List<LeagueMember> memberships = leagueMemberRepo.findByPlayerId(currentPlayer.getId());
+
+        if (memberships.isEmpty()) {
+            Span noLeagues = new Span("You are not in any leagues yet.");
+            noLeagues.getStyle().set("color", "#94a3b8").set("margin-top", "20px");
+            leaguesContainer.add(noLeagues);
         } else {
-            // Guardrail if the OAuth user isn't in your players table yet
-            Span errorSpan = new Span("Account not found in database. Please contact admin.");
-            errorSpan.getStyle().set("color", "#ef4444");
-            leaguesContainer.add(errorSpan);
+            for (LeagueMember membership : memberships) {
+                leaguesContainer.add(createLeagueCard(membership.getLeague()));
+            }
         }
 
         // 6. Create/Join League Buttons
@@ -103,17 +116,31 @@ public class DashboardView extends VerticalLayout {
 
         Button joinLeagueBtn = new Button("Join League");
         joinLeagueBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
-        joinLeagueBtn.getStyle().set("color", "#10b981"); // Emerald green
+        joinLeagueBtn.getStyle().set("color", "#10b981");
         joinLeagueBtn.addClickListener(e -> {
             com.vaadin.flow.component.notification.Notification.show("Join League prompt coming soon!");
         });
 
         Button createLeagueBtn = new Button("+ Create New League");
         createLeagueBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
-        createLeagueBtn.getStyle().set("color", "#60a5fa"); // Blue
-        createLeagueBtn.addClickListener(e -> {
-            com.vaadin.flow.component.notification.Notification.show("Custom league creation coming soon!");
-        });
+        createLeagueBtn.getStyle().set("color", "#60a5fa");
+
+        // 2. Wire up the Create League button to open our new dialog
+        if (currentPlayer != null) {
+            Player finalCurrentPlayer = currentPlayer;
+            createLeagueBtn.addClickListener(e -> {
+                CreateLeagueDialog dialog = new CreateLeagueDialog(
+                        leagueRepo,
+                        leagueMemberRepo,
+                        playerRepo,
+                        finalCurrentPlayer.getId(),
+                        () -> UI.getCurrent().getPage().reload() // 3. Refresh the page to show the new card
+                );
+                dialog.open();
+            });
+        } else {
+            createLeagueBtn.setEnabled(false); // Disable if user isn't in DB
+        }
 
         actionButtons.add(joinLeagueBtn, createLeagueBtn);
 
@@ -139,11 +166,8 @@ public class DashboardView extends VerticalLayout {
         leagueDetails.getStyle().set("color", "#94a3b8").set("font-size", "0.85rem");
 
         Button enterButton = new Button("Enter League Board", e -> {
-            // THE MOST IMPORTANT STEP: Save the selected league ID to the Vaadin session
             VaadinSession.getCurrent().setAttribute("league_id", league.getId());
             VaadinSession.getCurrent().setAttribute("league_name", league.getName());
-
-            // Navigate to the board
             UI.getCurrent().navigate("board");
         });
         enterButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);

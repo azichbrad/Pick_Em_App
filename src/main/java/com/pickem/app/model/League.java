@@ -16,13 +16,23 @@ public class League {
     @Column(nullable = false)
     private String name;
 
-    // The Supabase auth_id (UUID) of the person who created the league
+    // The player ID of the person who created the league
     @Column(name = "owner_id", nullable = false)
-    private String ownerId;
+    private Long ownerId;
 
-    // A unique 6-8 character code users can type in to join
+    // The player ID of the league administrator
+    @Column(name = "admin_id")
+    private Long adminId;
+
+    // A unique code users can type in to join
     @Column(name = "invite_code", unique = true)
     private String inviteCode;
+
+    @Column(name = "enable_group_parlay")
+    private Boolean enableGroupParlay = true;
+
+    @Column(name = "picks_per_week")
+    private Integer picksPerWeek = 5;
 
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();
@@ -33,7 +43,7 @@ public class League {
     // Constructors
     public League() {}
 
-    public League(String name, String ownerId, String inviteCode) {
+    public League(String name, Long ownerId, String inviteCode) {
         this.name = name;
         this.ownerId = ownerId;
         this.inviteCode = inviteCode;
@@ -46,11 +56,20 @@ public class League {
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
-    public String getOwnerId() { return ownerId; }
-    public void setOwnerId(String ownerId) { this.ownerId = ownerId; }
+    public Long getOwnerId() { return ownerId; }
+    public void setOwnerId(Long ownerId) { this.ownerId = ownerId; }
+
+    public Long getAdminId() { return adminId; }
+    public void setAdminId(Long adminId) { this.adminId = adminId; }
 
     public String getInviteCode() { return inviteCode; }
     public void setInviteCode(String inviteCode) { this.inviteCode = inviteCode; }
+
+    public Boolean getEnableGroupParlay() { return enableGroupParlay; }
+    public void setEnableGroupParlay(Boolean enableGroupParlay) { this.enableGroupParlay = enableGroupParlay; }
+
+    public Integer getPicksPerWeek() { return picksPerWeek; }
+    public void setPicksPerWeek(Integer picksPerWeek) { this.picksPerWeek = picksPerWeek; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
