@@ -416,6 +416,15 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
         final String loggedInUserLower = currentUser != null ? currentUser.toLowerCase() : "";
 
+        // Check if current user is the league commissioner
+        boolean isLeagueAdmin = false;
+        if (activeLeague != null && activeLeague.getOwnerId() != null) {
+            Player owner = playerRepo.findById(activeLeague.getOwnerId()).orElse(null);
+            if (owner != null && !loggedInUserLower.isEmpty()) {
+                isLeagueAdmin = loggedInUserLower.contains(owner.getName().toLowerCase()) || owner.getName().toLowerCase().contains(loggedInUserLower);
+            }
+        }
+
         activeLeaguePlayers.sort((p1, p2) -> {
             String p1Name = p1.getName().toLowerCase();
             String p2Name = p2.getName().toLowerCase();
@@ -570,9 +579,31 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                     }
                 }
 
-                if (weekLocked || gameLocked) {
-                    slotButton.getStyle().set("cursor", "default");
+                boolean isOwnPick = currentUser != null && player.getName().equalsIgnoreCase(currentUser);
 
+                // --- SLOT CLICK ROUTING ---
+                if (existingPick != null && isLeagueAdmin) {
+                    // 1. COMMISSIONER MODE: Click any filled slot for the Admin Override + Swap option
+                    slotButton.getStyle().set("cursor", "pointer");
+                    slotButton.addClickListener(event -> {
+                        AdminPickEditDialog dialog = new AdminPickEditDialog(
+                                existingPick,
+                                pickRepo,
+                                () -> renderPlayerColumns(boardGrid, sport, selectedWeek),
+                                () -> { // The Swap Action
+                                    PickSelectionDialog pickDialog = new PickSelectionDialog(
+                                            player, leagueId, currentSlot, sport, selectedWeek,
+                                            oddsService, pickService, conferenceService, gameSyncService,
+                                            () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
+                                    );
+                                    pickDialog.open();
+                                }
+                        );
+                        dialog.open();
+                    });
+                } else if (weekLocked || gameLocked) {
+                    // 2. LOCKED OUT: Games have started or week is over
+                    slotButton.getStyle().set("cursor", "default");
                     if (weekLocked && existingPick == null) {
                         slotButton.setText("🔒 Locked");
                         slotButton.getStyle()
@@ -580,6 +611,24 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                                 .set("background-color", "#0f172a")
                                 .set("border", "1px dashed #334155");
                     }
+                } else if (existingPick == null || isOwnPick) {
+                    // 3. STANDARD USER: Open a new slot, OR change their own unlocked pick
+                    slotButton.getStyle().set("cursor", "pointer");
+                    slotButton.addClickListener(event -> {
+                        PickSelectionDialog dialog = new PickSelectionDialog(
+                                player,
+                                leagueId,
+                                currentSlot,
+                                sport,
+                                selectedWeek,
+                                oddsService,
+                                pickService,
+                                conferenceService,
+                                gameSyncService,
+                                () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
+                        );
+                        dialog.open();
+                    });
                 } else {
                     slotButton.addClickListener(event -> {
                         // PASSED LEAGUE ID HERE
