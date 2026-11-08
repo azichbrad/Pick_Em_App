@@ -118,7 +118,6 @@ public class GameSyncService {
         List<Game> games = gameRepo.findAll();
 
         for (Game game : games) {
-            // Guardrail: Never simulate or finalize upcoming games
             if (game.getCommenceTime() != null && game.getCommenceTime().isAfter(now)) {
                 continue;
             }
@@ -161,35 +160,40 @@ public class GameSyncService {
         List<Pick> validPicksToSave = picks.stream().filter(p -> p.getId() != null).toList();
         pickRepo.saveAll(validPicksToSave);
 
-        Map<Player, List<Pick>> picksByPlayer = validPicksToSave.stream()
-                .collect(Collectors.groupingBy(Pick::getPlayer));
+        // Map picks by League, then by Player
+        Map<Long, Map<Player, List<Pick>>> picksByLeagueAndPlayer = validPicksToSave.stream()
+                .filter(p -> p.getLeagueId() != null && p.getPlayer() != null)
+                .collect(Collectors.groupingBy(Pick::getLeagueId, Collectors.groupingBy(Pick::getPlayer)));
 
-        for (Map.Entry<Player, List<Pick>> entry : picksByPlayer.entrySet()) {
-            Player player = entry.getKey();
-            List<Pick> playerPicks = entry.getValue();
+        for (Map.Entry<Long, Map<Player, List<Pick>>> leagueEntry : picksByLeagueAndPlayer.entrySet()) {
+            Long leagueId = leagueEntry.getKey();
+            for (Map.Entry<Player, List<Pick>> playerEntry : leagueEntry.getValue().entrySet()) {
+                Player player = playerEntry.getKey();
+                List<Pick> playerPicks = playerEntry.getValue();
 
-            int weeklyWins = (int) playerPicks.stream().filter(p -> "WIN".equals(p.getStatus())).count();
-            int weeklyLosses = (int) playerPicks.stream().filter(p -> "LOSS".equals(p.getStatus())).count();
-            int weeklyPushes = (int) playerPicks.stream().filter(p -> "PUSH".equals(p.getStatus())).count();
+                int weeklyWins = (int) playerPicks.stream().filter(p -> "WIN".equals(p.getStatus())).count();
+                int weeklyLosses = (int) playerPicks.stream().filter(p -> "LOSS".equals(p.getStatus())).count();
+                int weeklyPushes = (int) playerPicks.stream().filter(p -> "PUSH".equals(p.getStatus())).count();
 
-            PlayerRecord weeklyRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, weekNumber)
-                    .orElse(new PlayerRecord(player, sport, weekNumber));
-            weeklyRecord.setWins(weeklyWins);
-            weeklyRecord.setLosses(weeklyLosses);
-            weeklyRecord.setPushes(weeklyPushes);
-            playerRecordRepo.save(weeklyRecord);
+                PlayerRecord weeklyRecord = playerRecordRepo.findByLeagueIdAndPlayerIdAndSportAndWeekNumber(leagueId, player.getId(), sport, weekNumber)
+                        .orElse(new PlayerRecord(player, sport, weekNumber, leagueId));
+                weeklyRecord.setWins(weeklyWins);
+                weeklyRecord.setLosses(weeklyLosses);
+                weeklyRecord.setPushes(weeklyPushes);
+                playerRecordRepo.save(weeklyRecord);
 
-            List<Pick> allSportPicks = pickRepo.findByPlayerIdAndSport(player.getId(), sport);
-            int overallWins = (int) allSportPicks.stream().filter(p -> "WIN".equals(p.getStatus())).count();
-            int overallLosses = (int) allSportPicks.stream().filter(p -> "LOSS".equals(p.getStatus())).count();
-            int overallPushes = (int) allSportPicks.stream().filter(p -> "PUSH".equals(p.getStatus())).count();
+                List<Pick> allSportPicks = pickRepo.findByLeagueIdAndPlayerIdAndSport(leagueId, player.getId(), sport);
+                int overallWins = (int) allSportPicks.stream().filter(p -> "WIN".equals(p.getStatus())).count();
+                int overallLosses = (int) allSportPicks.stream().filter(p -> "LOSS".equals(p.getStatus())).count();
+                int overallPushes = (int) allSportPicks.stream().filter(p -> "PUSH".equals(p.getStatus())).count();
 
-            PlayerRecord overallRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, 0)
-                    .orElse(new PlayerRecord(player, sport, 0));
-            overallRecord.setWins(overallWins);
-            overallRecord.setLosses(overallLosses);
-            overallRecord.setPushes(overallPushes);
-            playerRecordRepo.save(overallRecord);
+                PlayerRecord overallRecord = playerRecordRepo.findByLeagueIdAndPlayerIdAndSportAndWeekNumber(leagueId, player.getId(), sport, 0)
+                        .orElse(new PlayerRecord(player, sport, 0, leagueId));
+                overallRecord.setWins(overallWins);
+                overallRecord.setLosses(overallLosses);
+                overallRecord.setPushes(overallPushes);
+                playerRecordRepo.save(overallRecord);
+            }
         }
     }
 
@@ -253,7 +257,6 @@ public class GameSyncService {
 
         System.out.println("📊 Processing " + apiOddsList.size() + " odds items for " + sport);
 
-        // Group by base ID, discarding any items without event IDs or team names
         Map<String, List<GameOddsDTO>> oddsByGame = apiOddsList.stream()
                 .filter(dto -> dto.eventId() != null && dto.homeTeam() != null && dto.awayTeam() != null)
                 .collect(Collectors.groupingBy(dto -> getBaseEventId(dto.eventId())));
@@ -275,12 +278,11 @@ public class GameSyncService {
                 GameOddsDTO baseInfo = gameOdds.get(0);
                 if (baseInfo.homeTeam() == null || baseInfo.awayTeam() == null) continue;
 
-                // 1. FBS Gatekeeper: Validate that logos exist for both teams
                 String awayLogo = getLogoUrl(baseInfo.awayTeam(), sport);
                 String homeLogo = getLogoUrl(baseInfo.homeTeam(), sport);
 
                 if (awayLogo == null || homeLogo == null) {
-                    continue; // Drops FCS programs
+                    continue;
                 }
 
                 Instant latestKickoff = gameOdds.stream()
@@ -320,21 +322,14 @@ public class GameSyncService {
                 game.setAwayLogo(awayLogo);
                 game.setCommenceTime(latestKickoff);
 
-                // Main line extraction: prefer is_main_line == true
                 for (GameOddsDTO odd : gameOdds) {
                     if (odd.selection() == null || odd.line() == null) continue;
 
-                    // If SharpAPI provides the is_main_line flag, enforce it!
                     if (Boolean.FALSE.equals(odd.isMainLine())) {
                         continue;
                     }
 
-                    String selection = odd.selection().trim().toLowerCase();
-                    String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam().trim().toLowerCase() : "";
-                    String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam().trim().toLowerCase() : "";
-
                     if ("point_spread".equalsIgnoreCase(odd.marketType())) {
-                        // Check the direct team_side flag from SharpAPI
                         if ("home".equalsIgnoreCase(odd.teamSide())) {
                             game.setHomeSpread(odd.line());
                             game.setAwaySpread(-odd.line());
@@ -375,12 +370,10 @@ public class GameSyncService {
     private boolean isSameMatchup(Game existing, String baseEventId, String sport, String homeTeam, String awayTeam, Instant commenceTime) {
         if (!sport.equalsIgnoreCase(existing.getSport())) return false;
 
-        // Direct ID match
         if (existing.getId() != null && getBaseEventId(existing.getId()).equalsIgnoreCase(baseEventId)) {
             return true;
         }
 
-        // Canonical string comparison (strip special characters & lowercase)
         String cleanExHome = normalizeForMatching(existing.getHomeTeam());
         String cleanExAway = normalizeForMatching(existing.getAwayTeam());
         String cleanNewHome = normalizeForMatching(homeTeam);
@@ -391,7 +384,6 @@ public class GameSyncService {
 
         if (!teamsMatch) return false;
 
-        // If times are present, ensure they are within 48 hours of each other to handle rescheduling/buckets
         if (existing.getCommenceTime() != null && commenceTime != null) {
             long hoursDiff = Math.abs(Duration.between(existing.getCommenceTime(), commenceTime).toHours());
             return hoursDiff <= 48;
@@ -407,7 +399,6 @@ public class GameSyncService {
         if (commenceTime != null) {
             date = commenceTime.atZone(ZoneId.of("America/Los_Angeles")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
         }
-        // Alphabetical ordering of teams prevents home/away order differences from creating new keys
         String pair = h.compareTo(a) < 0 ? h + "_vs_" + a : a + "_vs_" + h;
         return sport.toLowerCase() + "_" + pair + "_" + date;
     }

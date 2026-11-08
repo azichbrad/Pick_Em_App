@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @Service
 public class ParlayService {
@@ -24,18 +23,17 @@ public class ParlayService {
         this.parlayPickRepo = parlayPickRepo;
     }
 
-    public String getParlayDutyNames(int currentWeekNumber) {
+    public String getParlayDutyNames(Long leagueId, int currentWeekNumber) {
         int previousWeek = currentWeekNumber - 1;
         if (previousWeek < 1) {
             return "None (Week 1)";
         }
 
-        List<PlayerRecord> lastWeekRecords = playerRecordRepo.findByWeekNumber(previousWeek);
+        List<PlayerRecord> lastWeekRecords = playerRecordRepo.findByLeagueIdAndWeekNumber(leagueId, previousWeek);
         if (lastWeekRecords.isEmpty()) {
             return "Pending";
         }
 
-        // 1. Aggregate Combined Wins and Losses for each player across NCAAF + NFL
         Map<Player, Integer> totalWins = new HashMap<>();
         Map<Player, Integer> totalGames = new HashMap<>();
 
@@ -47,9 +45,7 @@ public class ParlayService {
             totalGames.merge(player, gamesPlayed, Integer::sum);
         }
 
-        // 2. Calculate the worst win percentage
-        double worstPercentage = 1.1; // Initialize above 1.0 (100%)
-
+        double worstPercentage = 1.1;
         Map<Player, Double> winPercentages = new HashMap<>();
 
         for (Map.Entry<Player, Integer> entry : totalWins.entrySet()) {
@@ -67,16 +63,13 @@ public class ParlayService {
             }
         }
 
-        // 3. Collect all players tied for the worst percentage
         List<String> losers = new ArrayList<>();
         for (Map.Entry<Player, Double> entry : winPercentages.entrySet()) {
-            // Using a small epsilon (0.001) for floating-point comparison safety
             if (Math.abs(entry.getValue() - worstPercentage) < 0.001) {
                 losers.add(entry.getKey().getName());
             }
         }
 
-        // 4. Format the output cleanly (e.g., "Brad", "Brad & Ben", or "Brad, Ben & John")
         if (losers.size() == 1) {
             return losers.get(0);
         } else if (losers.size() == 2) {
@@ -87,12 +80,13 @@ public class ParlayService {
         }
     }
 
-    public void saveOrUpdatePick(Player player, int weekNumber, String sport, String gameId,
+    public void saveOrUpdatePick(Player player, Long leagueId, int weekNumber, String sport, String gameId,
                                  String selection, Double lockedPoint, String matchName, String logoUrl) {
-        GroupParlayPick pick = parlayPickRepo.findByWeekNumberAndPlayerId(weekNumber, player.getId())
+        GroupParlayPick pick = parlayPickRepo.findByLeagueIdAndWeekNumberAndPlayerId(leagueId, weekNumber, player.getId())
                 .orElse(new GroupParlayPick());
 
         pick.setPlayer(player);
+        pick.setLeagueId(leagueId); // Stamping the isolated league
         pick.setWeekNumber(weekNumber);
         pick.setSport(sport);
         pick.setGameId(gameId);
@@ -104,11 +98,11 @@ public class ParlayService {
         parlayPickRepo.save(pick);
     }
 
-    public int getLockedPickCount(int weekNumber) {
-        return parlayPickRepo.countByWeekNumber(weekNumber);
+    public int getLockedPickCount(Long leagueId, int weekNumber) {
+        return parlayPickRepo.countByLeagueIdAndWeekNumber(leagueId, weekNumber);
     }
 
-    public List<GroupParlayPick> getPicksForWeek(int weekNumber) {
-        return parlayPickRepo.findByWeekNumber(weekNumber);
+    public List<GroupParlayPick> getPicksForWeek(Long leagueId, int weekNumber) {
+        return parlayPickRepo.findByLeagueIdAndWeekNumber(leagueId, weekNumber);
     }
 }

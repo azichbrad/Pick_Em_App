@@ -14,6 +14,9 @@ public class Pick {
     @JoinColumn(name = "player_id")
     private Player player;
 
+    @Column(name = "league_id")
+    private Long leagueId; // Added to isolate picks per league
+
     private Integer weekNumber; // e.g., Week 0, Week 1
     private Integer slotNumber; // 1 through 5
 
@@ -34,6 +37,9 @@ public class Pick {
 
     public Player getPlayer() { return player; }
     public void setPlayer(Player player) { this.player = player; }
+
+    public Long getLeagueId() { return leagueId; }
+    public void setLeagueId(Long leagueId) { this.leagueId = leagueId; }
 
     public Integer getWeekNumber() { return weekNumber; }
     public void setWeekNumber(Integer weekNumber) { this.weekNumber = weekNumber; }

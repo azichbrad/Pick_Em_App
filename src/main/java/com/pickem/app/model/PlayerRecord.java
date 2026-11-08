@@ -14,6 +14,9 @@ public class PlayerRecord {
     @JoinColumn(name = "player_id")
     private Player player;
 
+    @Column(name = "league_id")
+    private Long leagueId; // Added to isolate records per league
+
     private String sport;      // "NCAAF" or "NFL"
     private Integer weekNumber; // 1, 2, 3... or 0 for "Overall Season"
 
@@ -24,16 +27,19 @@ public class PlayerRecord {
     // Constructors, Getters, and Setters
     public PlayerRecord() {}
 
-    public PlayerRecord(Player player, String sport, Integer weekNumber) {
+    public PlayerRecord(Player player, String sport, Integer weekNumber, Long leagueId) {
         this.player = player;
         this.sport = sport;
         this.weekNumber = weekNumber;
+        this.leagueId = leagueId;
     }
 
     // Getters and Setters...
     public Long getId() { return id; }
     public Player getPlayer() { return player; }
     public void setPlayer(Player player) { this.player = player; }
+    public Long getLeagueId() { return leagueId; }
+    public void setLeagueId(Long leagueId) { this.leagueId = leagueId; }
     public String getSport() { return sport; }
     public void setSport(String sport) { this.sport = sport; }
     public Integer getWeekNumber() { return weekNumber; }

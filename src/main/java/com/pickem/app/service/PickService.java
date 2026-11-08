@@ -16,12 +16,10 @@ import java.util.Optional;
 @Service
 public class PickService {
 
-    // 1. Add GameRepository to your variables
     private final PickRepository pickRepo;
     private final BurnedSelectionRepository burnedSelectionRepo;
     private final GameRepository gameRepo;
 
-    // 2. Inject it into the constructor
     public PickService(PickRepository pickRepo, BurnedSelectionRepository burnedSelectionRepo, GameRepository gameRepo) {
         this.pickRepo = pickRepo;
         this.burnedSelectionRepo = burnedSelectionRepo;
@@ -35,11 +33,10 @@ public class PickService {
     }
 
     @Transactional
-    public void savePickWithBurnCheck(Player player, int slotNumber, String sport, int weekNumber,
+    public void savePickWithBurnCheck(Player player, Long leagueId, int slotNumber, String sport, int weekNumber,
                                       String selection, String logoUrl, String gameId, Double lockedPoint,
                                       String matchName, String marketType, String selectionSide, Runnable onPickSaved) {
 
-        // 3. HARD BACKEND LOCK: Block any picks 15 minutes past kickoff
         com.pickem.app.model.Game game = gameRepo.findById(gameId).orElse(null);
         if (game != null && game.getCommenceTime() != null) {
             java.time.Instant liveCutoff = java.time.Instant.now().minus(java.time.Duration.ofMinutes(15));
@@ -49,15 +46,14 @@ public class PickService {
             }
         }
 
-        // 2. Fetch the existing pick for this specific sport's slot
-        Optional<Pick> existingPickOpt = pickRepo.findByPlayerIdAndSportAndWeekNumberAndSlotNumber(
-                player.getId(), sport, weekNumber, slotNumber
+        // Updated to use League ID
+        Optional<Pick> existingPickOpt = pickRepo.findByLeagueIdAndPlayerIdAndSportAndWeekNumberAndSlotNumber(
+                leagueId, player.getId(), sport, weekNumber, slotNumber
         );
 
         if (existingPickOpt.isPresent()) {
             Pick existingPick = existingPickOpt.get();
 
-            // 3. If there is an active game in this slot, BURN IT before replacing it
             if (existingPick.getGameId() != null) {
                 BurnedSelection burned = new BurnedSelection();
                 burned.setPlayer(player);
@@ -73,9 +69,9 @@ public class PickService {
             updatePickData(existingPick, selection, logoUrl, gameId, lockedPoint, matchName, marketType, selectionSide);
             pickRepo.save(existingPick);
         } else {
-            // 4. Create brand new pick for empty slot
             Pick newPick = new Pick();
             newPick.setPlayer(player);
+            newPick.setLeagueId(leagueId); // Stamping the isolated league
             newPick.setSlotNumber(slotNumber);
             newPick.setSport(sport);
             newPick.setWeekNumber(weekNumber);

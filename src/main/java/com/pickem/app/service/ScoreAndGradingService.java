@@ -29,7 +29,6 @@ public class ScoreAndGradingService {
         this.playerRecordRepo = playerRecordRepo;
     }
 
-    // 1. LIGHTWEIGHT HOURLY SYNC
     @Scheduled(cron = "0 0 * * * *")
     public void hourlyActiveSync() {
         System.out.println("Starting lightweight hourly score sync...");
@@ -38,7 +37,6 @@ public class ScoreAndGradingService {
         System.out.println("Hourly sync completed.");
     }
 
-    // 2. DEEP NIGHTLY SYNC
     @Scheduled(cron = "0 0 2 * * *", zone = "America/Los_Angeles")
     public void nightlyDeepSync() {
         System.out.println("Starting heavy nightly deep score sync...");
@@ -54,24 +52,20 @@ public class ScoreAndGradingService {
         }
 
         System.out.println("🔍 Processing " + apiScores.size() + " incoming API scores...");
-        // 🛑 FIX: Pull ALL games so we don't accidentally ignore completed games with pending picks
         List<Game> allGames = gameRepository.findAll();
 
         for (ScoreDTO apiScore : apiScores) {
             if (Boolean.TRUE.equals(apiScore.completed()) && apiScore.scores() != null && apiScore.scores().size() >= 2) {
                 for (Game dbGame : allGames) {
 
-                    // 🛑 GUARDRAIL 1: Ensure the sport matches exactly (prevents College "Eagles" grading NFL "Eagles")
                     if (apiScore.sport_key() != null && dbGame.getSport() != null && !apiScore.sport_key().equalsIgnoreCase(dbGame.getSport())) {
                         continue;
                     }
 
-                    // 🛑 GUARDRAIL 2: Never accept final scores for games that haven't kicked off yet
                     if (dbGame.getCommenceTime() != null && dbGame.getCommenceTime().isAfter(java.time.Instant.now())) {
                         continue;
                     }
 
-                    // Check if both teams match (accounting for neutral-site swaps)
                     boolean directMatch = isTeamMatch(dbGame.getHomeTeam(), apiScore.homeTeam()) &&
                             isTeamMatch(dbGame.getAwayTeam(), apiScore.awayTeam());
 
@@ -151,14 +145,14 @@ public class ScoreAndGradingService {
             pick.setStatus(newStatus);
             pickRepository.save(pick);
 
-            if (pick.getPlayer() != null && pick.getWeekNumber() != null) {
-                updatePlayerRecords(pick.getPlayer(), game.getSport(), pick.getWeekNumber());
+            if (pick.getPlayer() != null && pick.getWeekNumber() != null && pick.getLeagueId() != null) {
+                updatePlayerRecords(pick.getPlayer(), game.getSport(), pick.getWeekNumber(), pick.getLeagueId());
             }
         }
     }
 
-    private void updatePlayerRecords(Player player, String sport, int weekNumber) {
-        List<Pick> allSportPicks = pickRepository.findByPlayerIdAndSport(player.getId(), sport);
+    private void updatePlayerRecords(Player player, String sport, int weekNumber, Long leagueId) {
+        List<Pick> allSportPicks = pickRepository.findByLeagueIdAndPlayerIdAndSport(leagueId, player.getId(), sport);
 
         int weeklyWins = 0, weeklyLosses = 0, weeklyPushes = 0;
 
@@ -174,10 +168,8 @@ public class ScoreAndGradingService {
             }
         }
 
-        // Only save the individual weekly record.
-        // Do NOT save an overall record to week_number = 0, as the UI already sums the weekly rows.
-        PlayerRecord weeklyRecord = playerRecordRepo.findByPlayerIdAndSportAndWeekNumber(player.getId(), sport, weekNumber)
-                .orElse(new PlayerRecord(player, sport, weekNumber));
+        PlayerRecord weeklyRecord = playerRecordRepo.findByLeagueIdAndPlayerIdAndSportAndWeekNumber(leagueId, player.getId(), sport, weekNumber)
+                .orElse(new PlayerRecord(player, sport, weekNumber, leagueId));
 
         weeklyRecord.setWins(weeklyWins);
         weeklyRecord.setLosses(weeklyLosses);
@@ -185,7 +177,6 @@ public class ScoreAndGradingService {
         playerRecordRepo.save(weeklyRecord);
     }
 
-    // Bidirectional normalizer and fuzzy matcher
     private boolean isTeamMatch(String dbTeam, String apiTeam) {
         if (dbTeam == null || apiTeam == null) return false;
 
@@ -193,12 +184,12 @@ public class ScoreAndGradingService {
         String normApi = normalizeTeam(apiTeam);
 
         if (normDb.equals(normApi)) return true;
-        if (!normDb.isEmpty() && normApi.contains(normDb)) return true;
-        if (!normApi.isEmpty() && normDb.contains(normApi)) return true;
 
-        String cleanDb = dbTeam.toLowerCase().replaceAll("[^a-z0-9 ]", "").trim();
-        String cleanApi = apiTeam.toLowerCase().replaceAll("[^a-z0-9 ]", "").trim();
-        return cleanApi.contains(cleanDb) || cleanDb.contains(cleanApi);
+        if (normApi.startsWith(normDb + " ") || normDb.startsWith(normApi + " ")) {
+            return true;
+        }
+
+        return false;
     }
 
     private String normalizeTeam(String name) {
@@ -209,7 +200,6 @@ public class ScoreAndGradingService {
                 .replaceAll("\\s+", " ")
                 .trim();
 
-        // Collegiate aliases & abbreviation bridges
         if (s.equals("lsu") || s.contains("louisiana state")) return "lsu";
         if (s.equals("ole miss") || s.equals("mississippi rebels") || s.equals("mississippi")) return "ole miss";
         if (s.equals("uconn") || s.contains("connecticut")) return "uconn";
@@ -225,8 +215,9 @@ public class ScoreAndGradingService {
         if (s.contains("hawaii")) return "hawaii";
         if (s.equals("pitt") || s.contains("pittsburgh")) return "pittsburgh";
         if (s.equals("usc") || s.contains("southern california")) return "usc";
+        if (s.contains("western kentucky") || s.equals("wku")) return "western kentucky";
+        if (s.contains("middle tennessee") || s.equals("mtsu")) return "middle tennessee";
 
-        // NFL aliases & city/franchise bridges
         if (s.contains("cardinals") || s.equals("ari")) return "arizona cardinals";
         if (s.contains("falcons") || s.equals("atl")) return "atlanta falcons";
         if (s.contains("ravens") || s.equals("bal")) return "baltimore ravens";

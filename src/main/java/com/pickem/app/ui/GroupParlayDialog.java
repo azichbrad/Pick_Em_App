@@ -28,25 +28,34 @@ import java.util.stream.Collectors;
 
 public class GroupParlayDialog extends Dialog {
 
+    private final Long leagueId;
     private final ParlayService parlayService;
     private final PlayerRepository playerRepo;
     private final OddsService oddsService;
     private final ConferenceService conferenceService;
     private final GameSyncService gameSyncService;
-    private final Runnable onParlayUpdated;
+    private Runnable onParlayUpdated;
 
     private final VerticalLayout slotsContainer = new VerticalLayout();
     private final String loggedInEmail;
     private final boolean isAdmin;
 
-    public GroupParlayDialog(int weekNumber, ParlayService parlayService, PlayerRepository playerRepo,
-                             OddsService oddsService, ConferenceService conferenceService,
-                             GameSyncService gameSyncService, Runnable onParlayUpdated) {
+    public GroupParlayDialog(
+            Long leagueId,
+            int weekNumber,
+            ParlayService parlayService,
+            PlayerRepository playerRepo,
+            OddsService oddsService,
+            ConferenceService conferenceService,
+            GameSyncService gameSyncService,
+            Runnable onParlayUpdated
+    ) {
         this.parlayService = parlayService;
         this.playerRepo = playerRepo;
         this.oddsService = oddsService;
         this.conferenceService = conferenceService;
         this.gameSyncService = gameSyncService;
+        this.leagueId = leagueId;
         this.onParlayUpdated = onParlayUpdated;
 
         // Capture Auth Context for permissions
@@ -71,7 +80,7 @@ public class GroupParlayDialog extends Dialog {
         content.setSpacing(true);
 
         // --- PARLAY DUTY BANNER ---
-        String dutyNames = parlayService.getParlayDutyNames(weekNumber);
+        String dutyNames = parlayService.getParlayDutyNames(this.leagueId, weekNumber);
         Div banner = new Div();
         banner.setWidthFull();
         banner.getStyle()
@@ -112,7 +121,7 @@ public class GroupParlayDialog extends Dialog {
         slotsContainer.removeAll();
 
         List<Player> allPlayers = playerRepo.findAll();
-        List<GroupParlayPick> currentPicks = parlayService.getPicksForWeek(weekNumber);
+        List<GroupParlayPick> currentPicks = parlayService.getPicksForWeek(this.leagueId, weekNumber);
         Map<Long, GroupParlayPick> pickByPlayerId = currentPicks.stream()
                 .collect(Collectors.toMap(p -> p.getPlayer().getId(), Function.identity()));
 
@@ -197,12 +206,21 @@ public class GroupParlayDialog extends Dialog {
 
     private void openSelectionModal(Player player, int weekNumber) {
         ParlayPickSelectionDialog selectionDialog = new ParlayPickSelectionDialog(
-                player, weekNumber, parlayService, oddsService, conferenceService, gameSyncService, () -> {
-            renderSlots(weekNumber);
-            if (onParlayUpdated != null) {
-                onParlayUpdated.run();
-            }
-        });
+                player,
+                this.leagueId,
+                weekNumber,
+                parlayService,        // Moved service up
+                oddsService,          // Moved service up
+                "NCAAF",              // Moved string down to match 'currentSport'
+                conferenceService,
+                gameSyncService,
+                () -> {
+                    renderSlots(weekNumber);
+                    if (onParlayUpdated != null) {
+                        onParlayUpdated.run();
+                    }
+                }
+        );
         selectionDialog.open();
     }
 }

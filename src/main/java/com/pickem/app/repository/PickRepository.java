@@ -9,12 +9,12 @@ import java.util.Optional;
 @Repository
 public interface PickRepository extends JpaRepository<Pick, Long> {
 
-    Optional<Pick> findByPlayerIdAndWeekNumberAndSlotNumber(Long playerId, Integer weekNumber, Integer slotNumber);
-
+    // Retained globally for the ScoreAndGradingService (so one game score updates all leagues' picks)
     List<Pick> findByGameIdAndStatus(String gameId, String status);
     List<Pick> findByWeekNumberAndSport(Integer weekNumber, String sport);
-    Optional<Pick> findByPlayerIdAndSportAndWeekNumberAndSlotNumber(Long playerId, String sport, Integer weekNumber, Integer slotNumber);
-
-    // --- ADD THIS NEW METHOD HERE ---
-    List<Pick> findByPlayerIdAndSport(Long playerId, String sport);
+    // Updated to require League ID
+    Optional<Pick> findByLeagueIdAndPlayerIdAndWeekNumberAndSlotNumber(Long leagueId, Long playerId, Integer weekNumber, Integer slotNumber);
+    List<Pick> findByLeagueIdAndWeekNumberAndSport(Long leagueId, Integer weekNumber, String sport);
+    Optional<Pick> findByLeagueIdAndPlayerIdAndSportAndWeekNumberAndSlotNumber(Long leagueId, Long playerId, String sport, Integer weekNumber, Integer slotNumber);
+    List<Pick> findByLeagueIdAndPlayerIdAndSport(Long leagueId, Long playerId, String sport);
 }

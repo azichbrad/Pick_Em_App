@@ -1,10 +1,6 @@
 package com.pickem.app.model;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.ManyToOne;
+import jakarta.persistence.*;
 
 @Entity
 public class GroupParlayPick {
@@ -17,6 +13,12 @@ public class GroupParlayPick {
 
     @ManyToOne
     private Player player;
+
+    @Column(name = "league_id")
+    private Long leagueId;
+
+    public Long getLeagueId() { return leagueId; }
+    public void setLeagueId(Long leagueId) { this.leagueId = leagueId; }
 
     private String sport;
     private String gameId;

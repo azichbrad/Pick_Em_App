@@ -29,6 +29,7 @@ import java.util.Map;
 
 public class ParlayPickSelectionDialog extends Dialog {
 
+    private final Long leagueId;
     private final VerticalLayout gameListContainer = new VerticalLayout();
     private final ParlayService parlayService;
     private final GameSyncService gameSyncService;
@@ -44,14 +45,16 @@ public class ParlayPickSelectionDialog extends Dialog {
 
     private static final String TOTALS_ICON = "https://cdn-icons-png.flaticon.com/512/1199/1199155.png";
 
-    public ParlayPickSelectionDialog(
-            Player player, int weekNumber, ParlayService parlayService,
-            OddsService oddsService, ConferenceService conferenceService,
+    public ParlayPickSelectionDialog(Player player,
+                                     Long leagueId,
+                                     int weekNumber, ParlayService parlayService,
+            OddsService oddsService, String currentSport, ConferenceService conferenceService,
             GameSyncService gameSyncService, Runnable onPickSaved
     ) {
         this.player = player;
         this.weekNumber = weekNumber;
         this.parlayService = parlayService;
+        this.leagueId = leagueId;
         this.gameSyncService = gameSyncService;
         this.conferenceService = conferenceService;
         this.onPickSaved = onPickSaved;
@@ -362,7 +365,7 @@ public class ParlayPickSelectionDialog extends Dialog {
     }
 
     private void submitPick(String selection, String logoUrl, String gameId, Double lockedPoint, String matchName) {
-        parlayService.saveOrUpdatePick(player, weekNumber, currentSport, gameId, selection, lockedPoint, matchName, logoUrl);
+        parlayService.saveOrUpdatePick(player, leagueId, weekNumber, currentSport, gameId, selection, lockedPoint, matchName, logoUrl);
         if (onPickSaved != null) {
             onPickSaved.run();
         }
