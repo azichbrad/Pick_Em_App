@@ -1,10 +1,12 @@
 package com.pickem.app.ui;
 
+import com.pickem.app.model.League;
 import com.pickem.app.model.LeagueMember;
 import com.pickem.app.model.Pick;
 import com.pickem.app.model.Player;
 import com.pickem.app.model.PlayerRecord;
 import com.pickem.app.repository.LeagueMemberRepository;
+import com.pickem.app.repository.LeagueRepository;
 import com.pickem.app.repository.PickRepository;
 import com.pickem.app.repository.PlayerRecordRepository;
 import com.pickem.app.repository.PlayerRepository;
@@ -44,13 +46,15 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
     private final PlayerRecordRepository playerRecordRepo;
     private final PickService pickService;
     private final ParlayService parlayService;
-    private final LeagueMemberRepository leagueMemberRepo; // 1. Added new repository
+    private final LeagueMemberRepository leagueMemberRepo;
+    private final LeagueRepository leagueRepo; // 1. Added LeagueRepository
 
     public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService,
                      ConferenceService conferenceService,
                      GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo,
                      PickService pickService, ParlayService parlayService,
-                     LeagueMemberRepository leagueMemberRepo) {
+                     LeagueMemberRepository leagueMemberRepo,
+                     LeagueRepository leagueRepo) { // Inject it here
         this.playerRepo = playerRepo;
         this.pickRepo = pickRepo;
         this.oddsService = oddsService;
@@ -60,6 +64,7 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         this.parlayService = parlayService;
         this.pickService = pickService;
         this.leagueMemberRepo = leagueMemberRepo;
+        this.leagueRepo = leagueRepo;
 
         getElement().setAttribute("theme", Lumo.DARK);
         setSizeFull();
@@ -71,7 +76,6 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
     @Override
     public void beforeEnter(BeforeEnterEvent event) {
-        // 2. Security Check: If no league is selected, kick them back to the dashboard
         Long currentLeagueId = (Long) VaadinSession.getCurrent().getAttribute("league_id");
         if (currentLeagueId == null) {
             event.forwardTo(DashboardView.class);
@@ -80,6 +84,17 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
     private void renderTabs() {
         removeAll();
+
+        // 2. Fetch the active league to get its custom settings safely
+        Long currentLeagueId = (Long) VaadinSession.getCurrent().getAttribute("league_id");
+        League activeLeague = null;
+
+        if (currentLeagueId != null) {
+            activeLeague = leagueRepo.findById(currentLeagueId).orElse(null);
+        }
+
+        boolean parlayEnabled = activeLeague != null && Boolean.TRUE.equals(activeLeague.getEnableGroupParlay());
+        int picksPerWeek = activeLeague != null && activeLeague.getPicksPerWeek() != null ? activeLeague.getPicksPerWeek() : 5;
 
         TabSheet tabSheet = new TabSheet();
         tabSheet.setSizeFull();
@@ -105,6 +120,7 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
         Button groupParlayBtn = new Button();
         groupParlayBtn.getStyle().set("margin-right", "8px");
+        groupParlayBtn.setVisible(parlayEnabled); // 3. Hide the button if parlay is disabled
 
         int[] currentWeeks = { calculateCurrentWeek("NCAAF"), calculateCurrentWeek("NFL") };
         String[] currentTab = { "NCAAF" };
@@ -114,11 +130,12 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
             int lockedCount = parlayService.getLockedPickCount(masterWeek);
             String slateLabel = getSlateSundayForWeek(masterWeek);
 
-            if (lockedCount >= 5) {
+            // 4. Update the parlay readiness to require the custom pick amount
+            if (lockedCount >= picksPerWeek) {
                 groupParlayBtn.setText(slateLabel + " (Ready)");
                 groupParlayBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_SUCCESS, com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
             } else {
-                groupParlayBtn.setText(slateLabel + " (" + lockedCount + "/5)");
+                groupParlayBtn.setText(slateLabel + " (" + lockedCount + "/" + picksPerWeek + ")");
                 groupParlayBtn.removeThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_SUCCESS);
                 groupParlayBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
             }
@@ -223,8 +240,13 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         long startTime = System.currentTimeMillis();
         boardGrid.removeAll();
 
-        // 3. Multi-Tenant Logic: Fetch only players assigned to the active league
         Long leagueId = (Long) VaadinSession.getCurrent().getAttribute("league_id");
+
+        // Prevent Spring Data crash if session is missing; beforeEnter will handle the redirect
+        if (leagueId == null) {
+            return;
+        }
+
         List<LeagueMember> memberships = leagueMemberRepo.findByLeagueId(leagueId);
         List<Player> activeLeaguePlayers = new java.util.ArrayList<>(
                 memberships.stream()
@@ -232,18 +254,19 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                         .toList()
         );
 
+        // 5. Fetch active league again to determine how many pick slots to render
+        League activeLeague = leagueRepo.findById(leagueId).orElse(null);
+        int picksPerWeek = activeLeague != null && activeLeague.getPicksPerWeek() != null ? activeLeague.getPicksPerWeek() : 5;
+
         List<PlayerRecord> allWeeklyRecords = playerRecordRepo.findBySport(sport).stream()
                 .filter(r -> r.getWeekNumber() != null && r.getWeekNumber() < 90)
                 .toList();
 
-        // 4. Initialize aggregation map ONLY with players in the active league
         java.util.Map<Long, int[]> aggregatedMap = new java.util.HashMap<>();
         for (Player p : activeLeaguePlayers) {
             aggregatedMap.put(p.getId(), new int[3]);
         }
 
-        // 5. This automatically filters out records from players not in the league
-        // because they won't exist in the aggregatedMap
         for (PlayerRecord rec : allWeeklyRecords) {
             if (rec.getPlayer() != null && aggregatedMap.containsKey(rec.getPlayer().getId())) {
                 int[] stats = aggregatedMap.get(rec.getPlayer().getId());
@@ -274,12 +297,12 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
         List<PlayerRecord> weeklyRecords = playerRecordRepo.findBySportAndWeekNumber(sport, selectedWeek);
         java.util.Map<Long, PlayerRecord> weeklyRecordMap = weeklyRecords.stream()
-                .filter(r -> aggregatedMap.containsKey(r.getPlayer().getId())) // Filter weekly records by league too
+                .filter(r -> aggregatedMap.containsKey(r.getPlayer().getId()))
                 .collect(java.util.stream.Collectors.toMap(r -> r.getPlayer().getId(), r -> r));
 
         List<Pick> weeklyPicList = pickRepo.findByWeekNumberAndSport(selectedWeek, sport);
         java.util.Map<Long, java.util.Map<Integer, Pick>> playerPicksMap = weeklyPicList.stream()
-                .filter(p -> aggregatedMap.containsKey(p.getPlayer().getId())) // Filter picks by league
+                .filter(p -> aggregatedMap.containsKey(p.getPlayer().getId()))
                 .collect(java.util.stream.Collectors.groupingBy(
                         p -> p.getPlayer().getId(),
                         java.util.stream.Collectors.toMap(Pick::getSlotNumber, p -> p, (p1, p2) -> p1)
@@ -333,7 +356,6 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
         final String loggedInUserLower = currentUser != null ? currentUser.toLowerCase() : "";
 
-        // Sort only the active league players
         activeLeaguePlayers.sort((p1, p2) -> {
             String p1Name = p1.getName().toLowerCase();
             String p2Name = p2.getName().toLowerCase();
@@ -390,7 +412,8 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
             java.util.Map<Integer, Pick> slotPickMap = playerPicksMap.getOrDefault(player.getId(), java.util.Map.of());
             boolean weekLocked = isWeekLocked(sport, selectedWeek);
 
-            for (int slot = 1; slot <= 5; slot++) {
+            // 6. Changed hardcoded 5 to the league's custom picksPerWeek amount
+            for (int slot = 1; slot <= picksPerWeek; slot++) {
                 int currentSlot = slot;
                 Pick existingPick = slotPickMap.get(currentSlot);
 

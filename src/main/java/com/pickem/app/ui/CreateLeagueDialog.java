@@ -10,7 +10,6 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.dialog.Dialog;
-import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
@@ -21,6 +20,7 @@ import com.vaadin.flow.server.VaadinSession;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
 
 public class CreateLeagueDialog extends Dialog {
 
@@ -62,12 +62,25 @@ public class CreateLeagueDialog extends Dialog {
         // 4. Admin Setting: Picks Per Week Selector
         Select<Integer> picksPerWeekSelect = new Select<>();
         picksPerWeekSelect.setLabel("Picks Per Week");
-        picksPerWeekSelect.setItems(3, 4, 5, 6, 7);
-        picksPerWeekSelect.setValue(5);
+
+        // Generate a list of options from 1 to 15 (or whatever maximum you prefer)
+        List<Integer> pickOptions = java.util.stream.IntStream.rangeClosed(1, 15).boxed().toList();
+        picksPerWeekSelect.setItems(pickOptions);
+
+        // Custom item renderer to add the "Premium" label for numbers > 10
+        picksPerWeekSelect.setItemLabelGenerator(item -> {
+            if (item > 10) {
+                return item + " Picks (Premium)";
+            }
+            return item + " Picks";
+        });
+
+        picksPerWeekSelect.setValue(5); // Default value
         picksPerWeekSelect.setWidthFull();
 
         layout.add(leagueNameField, joinCodeField, parlayToggle, picksPerWeekSelect);
 
+        // Buttons
         // Buttons
         Button saveBtn = new Button("Create League", event -> {
             String name = leagueNameField.getValue();
@@ -83,9 +96,10 @@ public class CreateLeagueDialog extends Dialog {
             newLeague.setName(name);
             newLeague.setInviteCode(code);
             newLeague.setOwnerId(currentPlayerId);
+            newLeague.setAdminId(currentPlayerId); // Ensures you are marked as the admin
             newLeague.setEnableGroupParlay(parlayToggle.getValue());
             newLeague.setPicksPerWeek(picksPerWeekSelect.getValue());
-            newLeague.setCreatedAt(Instant.from(LocalDateTime.now()));
+            newLeague.setCreatedAt(Instant.now()); // CORRECTED: Sets the League creation time
 
             League savedLeague = leagueRepository.save(newLeague);
 
@@ -95,7 +109,7 @@ public class CreateLeagueDialog extends Dialog {
                 LeagueMember member = new LeagueMember();
                 member.setLeague(savedLeague);
                 member.setPlayer(creator);
-                member.setJoinedAt(Instant.from(LocalDateTime.now()));
+                member.setJoinedAt(Instant.now()); // CORRECTED: Sets the Member join time
                 leagueMemberRepository.save(member);
             }
 
