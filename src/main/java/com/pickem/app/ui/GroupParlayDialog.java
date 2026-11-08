@@ -2,6 +2,7 @@ package com.pickem.app.ui;
 
 import com.pickem.app.model.GroupParlayPick;
 import com.pickem.app.model.Player;
+import com.pickem.app.repository.LeagueMemberRepository;
 import com.pickem.app.repository.PlayerRepository;
 import com.pickem.app.service.ConferenceService;
 import com.pickem.app.service.GameSyncService;
@@ -39,6 +40,7 @@ public class GroupParlayDialog extends Dialog {
     private final VerticalLayout slotsContainer = new VerticalLayout();
     private final String loggedInEmail;
     private final boolean isAdmin;
+    private final LeagueMemberRepository leagueMemberRepo;
 
     public GroupParlayDialog(
             Long leagueId,
@@ -48,7 +50,7 @@ public class GroupParlayDialog extends Dialog {
             OddsService oddsService,
             ConferenceService conferenceService,
             GameSyncService gameSyncService,
-            Runnable onParlayUpdated
+            Runnable onParlayUpdated, LeagueMemberRepository leagueMemberRepo
     ) {
         this.parlayService = parlayService;
         this.playerRepo = playerRepo;
@@ -57,6 +59,7 @@ public class GroupParlayDialog extends Dialog {
         this.gameSyncService = gameSyncService;
         this.leagueId = leagueId;
         this.onParlayUpdated = onParlayUpdated;
+        this.leagueMemberRepo = leagueMemberRepo;
 
         // Capture Auth Context for permissions
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
@@ -73,7 +76,10 @@ public class GroupParlayDialog extends Dialog {
         setWidth("100%");
         setMaxWidth("520px");
 
-        setHeaderTitle("Weekly 5-Leg Parlay");
+        java.time.ZonedDateTime week0Sunday = java.time.ZonedDateTime.of(2026, 8, 23, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
+        String dateLabel = week0Sunday.plusWeeks(weekNumber).format(java.time.format.DateTimeFormatter.ofPattern("MMM d"));
+
+        setHeaderTitle("Weekly 5-Leg Parlay - " + dateLabel);
 
         VerticalLayout content = new VerticalLayout();
         content.setPadding(false);
@@ -120,53 +126,68 @@ public class GroupParlayDialog extends Dialog {
     private void renderSlots(int weekNumber) {
         slotsContainer.removeAll();
 
-        List<Player> allPlayers = playerRepo.findAll();
+        List<Player> allPlayers = leagueMemberRepo.findByLeagueId(this.leagueId).stream()
+                .map(member -> member.getPlayer())
+                .toList();
         List<GroupParlayPick> currentPicks = parlayService.getPicksForWeek(this.leagueId, weekNumber);
         Map<Long, GroupParlayPick> pickByPlayerId = currentPicks.stream()
                 .collect(Collectors.toMap(p -> p.getPlayer().getId(), Function.identity()));
 
         for (Player player : allPlayers) {
             GroupParlayPick pick = pickByPlayerId.get(player.getId());
+            boolean canEdit = this.isAdmin || (this.loggedInEmail != null && this.loggedInEmail.equalsIgnoreCase(player.getEmail()));
 
-            HorizontalLayout row = new HorizontalLayout();
-            row.setWidthFull();
-            row.setAlignItems(FlexComponent.Alignment.CENTER);
-            row.getStyle()
+            // MAIN CARD CONTAINER (Vertical)
+            VerticalLayout card = new VerticalLayout();
+            card.setWidthFull();
+            card.setPadding(false);
+            card.setSpacing(false);
+            card.getStyle()
                     .set("background-color", "#151d30")
                     .set("border", "1px solid #22304d")
                     .set("border-radius", "8px")
-                    .set("padding", "8px 12px")
-                    .set("min-height", "46px");
+                    .set("padding", "12px")
+                    .set("margin-bottom", "8px");
 
-            // Player Name
+            // TOP ROW: Player Name & Button
+            HorizontalLayout topRow = new HorizontalLayout();
+            topRow.setWidthFull();
+            topRow.setJustifyContentMode(FlexComponent.JustifyContentMode.BETWEEN);
+            topRow.setAlignItems(FlexComponent.Alignment.CENTER);
+
             Span playerName = new Span(player.getName());
-            playerName.setWidth("90px");
             playerName.getStyle()
                     .set("font-weight", "600")
-                    .set("color", "#e2e8f0")
-                    .set("flex-shrink", "0");
+                    .set("color", "#e2e8f0");
 
-            boolean canEdit = this.isAdmin || (this.loggedInEmail != null && this.loggedInEmail.equalsIgnoreCase(player.getEmail()));
+            // BOTTOM ROW: The Pick Details
+            HorizontalLayout bottomRow = new HorizontalLayout();
+            bottomRow.setWidthFull();
+            bottomRow.setAlignItems(FlexComponent.Alignment.CENTER);
+            bottomRow.getStyle().set("margin-top", "8px");
 
             if (pick != null) {
-                // RENDER SELECTED PICK
-                HorizontalLayout pickDetails = new HorizontalLayout();
-                pickDetails.setAlignItems(FlexComponent.Alignment.CENTER);
-                pickDetails.setSpacing(true);
+                // --- SELECTED PICK STATE ---
+                Button changeBtn = new Button("Edit", e -> openSelectionModal(player, weekNumber));
+                changeBtn.addThemeVariants(ButtonVariant.LUMO_SMALL);
+                changeBtn.setEnabled(canEdit);
+                topRow.add(playerName, changeBtn);
 
                 if (pick.getLogoUrl() != null && !pick.getLogoUrl().isBlank()) {
                     Image logo = new Image(pick.getLogoUrl(), "Logo");
                     logo.setWidth("20px");
                     logo.setHeight("20px");
-                    logo.getStyle().set("flex-shrink", "0");
-                    pickDetails.add(logo);
+                    logo.getStyle().set("flex-shrink", "0").set("margin-right", "8px");
+                    bottomRow.add(logo);
                 }
 
                 Span selectionText = new Span(pick.getSelection());
                 selectionText.getStyle()
                         .set("font-weight", "600")
                         .set("color", "#38bdf8")
-                        .set("font-size", "0.9rem");
+                        .set("font-size", "0.9rem")
+                        .set("white-space", "normal") // Wraps normally over 2 lines
+                        .set("line-height", "1.3");
 
                 Span sportBadge = new Span(pick.getSport());
                 sportBadge.getStyle()
@@ -175,32 +196,26 @@ public class GroupParlayDialog extends Dialog {
                         .set("border-radius", "4px")
                         .set("padding", "2px 6px")
                         .set("font-size", "0.7rem")
-                        .set("font-weight", "700");
+                        .set("font-weight", "700")
+                        .set("margin-left", "8px")
+                        .set("flex-shrink", "0");
 
-                pickDetails.add(selectionText, sportBadge);
-
-                Button changeBtn = new Button("Edit", e -> openSelectionModal(player, weekNumber));
-                changeBtn.addThemeVariants(ButtonVariant.LUMO_SMALL);
-                changeBtn.setEnabled(canEdit);
-                changeBtn.getStyle().set("margin-left", "auto");
-
-                row.add(playerName, pickDetails, changeBtn);
-                row.expand(pickDetails);
+                bottomRow.add(selectionText, sportBadge);
+                bottomRow.expand(selectionText); // Gives the text all available space
             } else {
-                // PENDING SLOT
-                Span pending = new Span("Pick pending...");
-                pending.getStyle().set("color", "#64748b").set("font-style", "italic").set("font-size", "0.85rem");
-
+                // --- PENDING STATE ---
                 Button pickBtn = new Button("Select Leg", e -> openSelectionModal(player, weekNumber));
                 pickBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_PRIMARY);
                 pickBtn.setEnabled(canEdit);
-                pickBtn.getStyle().set("margin-left", "auto");
+                topRow.add(playerName, pickBtn);
 
-                row.add(playerName, pending, pickBtn);
-                row.expand(pending);
+                Span pending = new Span("Pick pending...");
+                pending.getStyle().set("color", "#64748b").set("font-style", "italic").set("font-size", "0.85rem");
+                bottomRow.add(pending);
             }
 
-            slotsContainer.add(row);
+            card.add(topRow, bottomRow);
+            slotsContainer.add(card);
         }
     }
 

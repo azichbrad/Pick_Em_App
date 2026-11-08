@@ -124,17 +124,20 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         int[] currentWeeks = { calculateCurrentWeek("NCAAF"), calculateCurrentWeek("NFL") };
         String[] currentTab = { "NCAAF" };
 
+        // 1. Get the actual number of players in this specific league
+        int leagueSize = leagueMemberRepo.findByLeagueId(currentLeagueId).size();
+
         Runnable updateParlayBtnState = () -> {
             int masterWeek = currentTab[0].equals("NCAAF") ? currentWeeks[0] : (currentWeeks[1] + 1);
-            // PASSED LEAGUE ID HERE
             int lockedCount = parlayService.getLockedPickCount(currentLeagueId, masterWeek);
             String slateLabel = getSlateSundayForWeek(masterWeek);
 
-            if (lockedCount >= picksPerWeek) {
+            // 2. Change 'picksPerWeek' to 'leagueSize' for the parlay math
+            if (lockedCount >= leagueSize) {
                 groupParlayBtn.setText(slateLabel + " (Ready)");
                 groupParlayBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_SUCCESS, com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
             } else {
-                groupParlayBtn.setText(slateLabel + " (" + lockedCount + "/" + picksPerWeek + ")");
+                groupParlayBtn.setText(slateLabel + " (" + lockedCount + "/" + leagueSize + ")");
                 groupParlayBtn.removeThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_SUCCESS);
                 groupParlayBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
             }
@@ -142,15 +145,72 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
         groupParlayBtn.addClickListener(e -> {
             int masterWeek = currentTab[0].equals("NCAAF") ? currentWeeks[0] : (currentWeeks[1] + 1);
-            // PASSED LEAGUE ID HERE
+
+            // 3. Pass leagueMemberRepo as the final argument to the dialog
             GroupParlayDialog dialog = new GroupParlayDialog(
                     currentLeagueId, masterWeek, parlayService, playerRepo, oddsService,
-                    conferenceService, gameSyncService, updateParlayBtnState
+                    conferenceService, gameSyncService, updateParlayBtnState, leagueMemberRepo
             );
             dialog.open();
         });
 
-        tabSheet.setSuffixComponent(groupParlayBtn);
+        // --- START NEW TAB SUFFIX CONTROLS ---
+        HorizontalLayout tabRightControls = new HorizontalLayout();
+        tabRightControls.setAlignItems(Alignment.CENTER);
+        tabRightControls.add(groupParlayBtn);
+
+        if (activeLeague != null && activeLeague.getOwnerId() != null) {
+            // Find the owner of this league from the DB
+            Player owner = playerRepo.findById(activeLeague.getOwnerId()).orElse(null);
+
+            // Get the currently logged-in user
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            String currentUser = "";
+            if (auth != null) {
+                if (auth.getPrincipal() instanceof org.springframework.security.oauth2.core.user.OAuth2User oauthUser) {
+                    currentUser = oauthUser.getAttribute("name");
+                    if (currentUser == null) currentUser = oauthUser.getAttribute("given_name");
+                }
+                if (currentUser == null || currentUser.isEmpty()) {
+                    currentUser = auth.getName();
+                }
+            }
+            final String loggedInUserLower = currentUser != null ? currentUser.toLowerCase() : "";
+
+            // Check if the logged-in user matches the league owner
+            boolean isOwner = owner != null && !loggedInUserLower.isEmpty() &&
+                    (loggedInUserLower.contains(owner.getName().toLowerCase()) || owner.getName().toLowerCase().contains(loggedInUserLower));
+
+            // Only add the settings gear if they are the admin
+            if (isOwner) {
+                League finalActiveLeague = activeLeague;
+
+                // 1. Icon-only button to save horizontal space on mobile
+                Button settingsBtn = new Button("⚙️", click -> {
+                    LeagueSettingsDialog dialog = new LeagueSettingsDialog(finalActiveLeague, leagueRepo);
+                    dialog.open();
+                });
+
+                // 2. Add the LUMO_ICON variant to perfectly center the emoji
+                settingsBtn.addThemeVariants(
+                        com.vaadin.flow.component.button.ButtonVariant.LUMO_TERTIARY,
+                        com.vaadin.flow.component.button.ButtonVariant.LUMO_ICON
+                );
+
+                // 3. Remove excess margins/padding
+                settingsBtn.getStyle()
+                        .set("color", "#94a3b8")
+                        .set("margin-left", "4px")
+                        .set("margin-right", "8px")
+                        .set("padding", "0")
+                        .set("min-width", "auto");
+
+                tabRightControls.add(settingsBtn);
+            }
+        }
+        // Add both buttons to the far right of the tab bar
+        tabSheet.setSuffixComponent(tabRightControls);
+        // --- END NEW TAB SUFFIX CONTROLS ---
 
         com.vaadin.flow.component.tabs.Tab cfbTab = tabSheet.add(collegeTabLabel, createTabContent("NCAAF", week -> {
             currentWeeks[0] = week;
@@ -356,6 +416,15 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
         final String loggedInUserLower = currentUser != null ? currentUser.toLowerCase() : "";
 
+        // Check if current user is the league commissioner
+        boolean isLeagueAdmin = false;
+        if (activeLeague != null && activeLeague.getOwnerId() != null) {
+            Player owner = playerRepo.findById(activeLeague.getOwnerId()).orElse(null);
+            if (owner != null && !loggedInUserLower.isEmpty()) {
+                isLeagueAdmin = loggedInUserLower.contains(owner.getName().toLowerCase()) || owner.getName().toLowerCase().contains(loggedInUserLower);
+            }
+        }
+
         activeLeaguePlayers.sort((p1, p2) -> {
             String p1Name = p1.getName().toLowerCase();
             String p2Name = p2.getName().toLowerCase();
@@ -510,9 +579,31 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                     }
                 }
 
-                if (weekLocked || gameLocked) {
-                    slotButton.getStyle().set("cursor", "default");
+                boolean isOwnPick = currentUser != null && player.getName().equalsIgnoreCase(currentUser);
 
+                // --- SLOT CLICK ROUTING ---
+                if (existingPick != null && isLeagueAdmin) {
+                    // 1. COMMISSIONER MODE: Click any filled slot for the Admin Override + Swap option
+                    slotButton.getStyle().set("cursor", "pointer");
+                    slotButton.addClickListener(event -> {
+                        AdminPickEditDialog dialog = new AdminPickEditDialog(
+                                existingPick,
+                                pickRepo,
+                                () -> renderPlayerColumns(boardGrid, sport, selectedWeek),
+                                () -> { // The Swap Action
+                                    PickSelectionDialog pickDialog = new PickSelectionDialog(
+                                            player, leagueId, currentSlot, sport, selectedWeek,
+                                            oddsService, pickService, conferenceService, gameSyncService,
+                                            () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
+                                    );
+                                    pickDialog.open();
+                                }
+                        );
+                        dialog.open();
+                    });
+                } else if (weekLocked || gameLocked) {
+                    // 2. LOCKED OUT: Games have started or week is over
+                    slotButton.getStyle().set("cursor", "default");
                     if (weekLocked && existingPick == null) {
                         slotButton.setText("🔒 Locked");
                         slotButton.getStyle()
@@ -520,6 +611,24 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                                 .set("background-color", "#0f172a")
                                 .set("border", "1px dashed #334155");
                     }
+                } else if (existingPick == null || isOwnPick) {
+                    // 3. STANDARD USER: Open a new slot, OR change their own unlocked pick
+                    slotButton.getStyle().set("cursor", "pointer");
+                    slotButton.addClickListener(event -> {
+                        PickSelectionDialog dialog = new PickSelectionDialog(
+                                player,
+                                leagueId,
+                                currentSlot,
+                                sport,
+                                selectedWeek,
+                                oddsService,
+                                pickService,
+                                conferenceService,
+                                gameSyncService,
+                                () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
+                        );
+                        dialog.open();
+                    });
                 } else {
                     slotButton.addClickListener(event -> {
                         // PASSED LEAGUE ID HERE
