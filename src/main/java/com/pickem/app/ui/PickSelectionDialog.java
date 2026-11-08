@@ -9,8 +9,6 @@ import com.pickem.app.service.OddsService;
 import com.pickem.app.service.PickService;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
-import com.vaadin.flow.component.combobox.ComboBox;
-import com.vaadin.flow.component.combobox.ComboBoxVariant;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Span;
@@ -25,18 +23,15 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 
-import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 public class PickSelectionDialog extends Dialog {
 
+    private final Long leagueId;
     private final VerticalLayout gameListContainer = new VerticalLayout();
     private final List<Game> games;
     private final Map<String, TeamDTO> teamDataMap;
@@ -47,11 +42,17 @@ public class PickSelectionDialog extends Dialog {
     private final String loggedInEmail; // ADD THIS
     private final boolean isAdmin;
 
-    public PickSelectionDialog(
-            Player player, int slotNumber, String sport, int weekNumber,
-            OddsService oddsService, PickService pickService, ConferenceService conferenceService,
-            GameSyncService gameSyncService, Runnable onPickSaved
-    ) {
+    public PickSelectionDialog(Player player,
+                               Long leagueId,
+                               int slotNumber,
+                               String sport,
+                               int weekNumber,
+                               OddsService oddsService,
+                               PickService pickService,
+                               ConferenceService conferenceService,
+                               GameSyncService gameSyncService,
+                               Runnable onPickSaved) {
+        this.leagueId = leagueId;
         // --- CAPTURE AUTHENTICATION CONTEXT ---
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof OAuth2User oauth2User) {
@@ -472,8 +473,15 @@ public class PickSelectionDialog extends Dialog {
         }
 
         // 1. Pass an empty lambda () -> {} so the service doesn't trigger the UI refresh prematurely
-        pickService.savePickWithBurnCheck(player, slotNumber, sport, weekNumber, selection, logoUrl,
-                gameId, lockedPoint, matchName, marketType, selectionSide, () -> {});
+        // Pass leagueId as the second argument here
+        pickService.savePickWithBurnCheck(
+                player, leagueId, slotNumber, sport, weekNumber,
+                selection, logoUrl, gameId, lockedPoint, matchName, marketType, selectionSide,
+                () -> {
+                    close();
+                    if (onPickSaved != null) onPickSaved.run();
+                }
+        );
 
         // 2. The transaction is now fully committed! We can safely refresh the UI.
         if (onPickSaved != null) {

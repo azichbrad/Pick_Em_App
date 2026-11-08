@@ -85,7 +85,6 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
     private void renderTabs() {
         removeAll();
 
-        // 2. Fetch the active league to get its custom settings safely
         Long currentLeagueId = (Long) VaadinSession.getCurrent().getAttribute("league_id");
         League activeLeague = null;
 
@@ -120,17 +119,17 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
         Button groupParlayBtn = new Button();
         groupParlayBtn.getStyle().set("margin-right", "8px");
-        groupParlayBtn.setVisible(parlayEnabled); // 3. Hide the button if parlay is disabled
+        groupParlayBtn.setVisible(parlayEnabled);
 
         int[] currentWeeks = { calculateCurrentWeek("NCAAF"), calculateCurrentWeek("NFL") };
         String[] currentTab = { "NCAAF" };
 
         Runnable updateParlayBtnState = () -> {
             int masterWeek = currentTab[0].equals("NCAAF") ? currentWeeks[0] : (currentWeeks[1] + 1);
-            int lockedCount = parlayService.getLockedPickCount(masterWeek);
+            // PASSED LEAGUE ID HERE
+            int lockedCount = parlayService.getLockedPickCount(currentLeagueId, masterWeek);
             String slateLabel = getSlateSundayForWeek(masterWeek);
 
-            // 4. Update the parlay readiness to require the custom pick amount
             if (lockedCount >= picksPerWeek) {
                 groupParlayBtn.setText(slateLabel + " (Ready)");
                 groupParlayBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_SUCCESS, com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
@@ -143,8 +142,9 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
         groupParlayBtn.addClickListener(e -> {
             int masterWeek = currentTab[0].equals("NCAAF") ? currentWeeks[0] : (currentWeeks[1] + 1);
+            // PASSED LEAGUE ID HERE
             GroupParlayDialog dialog = new GroupParlayDialog(
-                    masterWeek, parlayService, playerRepo, oddsService,
+                    currentLeagueId, masterWeek, parlayService, playerRepo, oddsService,
                     conferenceService, gameSyncService, updateParlayBtnState
             );
             dialog.open();
@@ -258,7 +258,7 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         League activeLeague = leagueRepo.findById(leagueId).orElse(null);
         int picksPerWeek = activeLeague != null && activeLeague.getPicksPerWeek() != null ? activeLeague.getPicksPerWeek() : 5;
 
-        List<PlayerRecord> allWeeklyRecords = playerRecordRepo.findBySport(sport).stream()
+        List<PlayerRecord> allWeeklyRecords = playerRecordRepo.findByLeagueIdAndSport(leagueId, sport).stream()
                 .filter(r -> r.getWeekNumber() != null && r.getWeekNumber() < 90)
                 .toList();
 
@@ -281,7 +281,7 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
         List<PlayerRecord> overallRecords = aggregatedMap.entrySet().stream()
                 .map(entry -> {
-                    PlayerRecord total = new PlayerRecord(playerMap.get(entry.getKey()), sport, 99);
+                    PlayerRecord total = new PlayerRecord(playerMap.get(entry.getKey()), sport, 99, leagueId);
                     total.setWins(entry.getValue()[0]);
                     total.setLosses(entry.getValue()[1]);
                     total.setPushes(entry.getValue()[2]);
@@ -295,12 +295,12 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                 })
                 .toList();
 
-        List<PlayerRecord> weeklyRecords = playerRecordRepo.findBySportAndWeekNumber(sport, selectedWeek);
+        List<PlayerRecord> weeklyRecords = playerRecordRepo.findByLeagueIdAndSportAndWeekNumber(leagueId, sport, selectedWeek);
         java.util.Map<Long, PlayerRecord> weeklyRecordMap = weeklyRecords.stream()
                 .filter(r -> aggregatedMap.containsKey(r.getPlayer().getId()))
                 .collect(java.util.stream.Collectors.toMap(r -> r.getPlayer().getId(), r -> r));
 
-        List<Pick> weeklyPicList = pickRepo.findByWeekNumberAndSport(selectedWeek, sport);
+        List<Pick> weeklyPicList = pickRepo.findByLeagueIdAndWeekNumberAndSport(leagueId, selectedWeek, sport);
         java.util.Map<Long, java.util.Map<Integer, Pick>> playerPicksMap = weeklyPicList.stream()
                 .filter(p -> aggregatedMap.containsKey(p.getPlayer().getId()))
                 .collect(java.util.stream.Collectors.groupingBy(
@@ -366,8 +366,8 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
             if (isP1Current && !isP2Current) return -1;
             if (!isP1Current && isP2Current) return 1;
 
-            PlayerRecord r1 = weeklyRecordMap.getOrDefault(p1.getId(), new PlayerRecord(p1, sport, selectedWeek));
-            PlayerRecord r2 = weeklyRecordMap.getOrDefault(p2.getId(), new PlayerRecord(p2, sport, selectedWeek));
+            PlayerRecord r1 = weeklyRecordMap.getOrDefault(p1.getId(), new PlayerRecord(p1, sport, selectedWeek, leagueId));
+            PlayerRecord r2 = weeklyRecordMap.getOrDefault(p2.getId(), new PlayerRecord(p2, sport, selectedWeek, leagueId));
 
             if (r2.getWins() != r1.getWins()) {
                 return Integer.compare(r2.getWins(), r1.getWins());
@@ -395,7 +395,7 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
             H2 name = new H2(player.getName());
             name.getStyle().set("margin", "0").set("font-size", "1.25rem").set("font-weight", "700");
 
-            PlayerRecord currentWeekRec = weeklyRecordMap.getOrDefault(player.getId(), new PlayerRecord(player, sport, selectedWeek));
+            PlayerRecord currentWeekRec = weeklyRecordMap.getOrDefault(player.getId(), new PlayerRecord(player, sport, selectedWeek, leagueId));
             Span recordBadge = new Span(currentWeekRec.getWins() + "W - " + currentWeekRec.getLosses() + "L - " + currentWeekRec.getPushes() + "P");
             recordBadge.getStyle()
                     .set("background", "rgba(59, 130, 246, 0.15)")
@@ -522,8 +522,10 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                     }
                 } else {
                     slotButton.addClickListener(event -> {
+                        // PASSED LEAGUE ID HERE
                         PickSelectionDialog dialog = new PickSelectionDialog(
                                 player,
+                                leagueId,
                                 currentSlot,
                                 sport,
                                 selectedWeek,

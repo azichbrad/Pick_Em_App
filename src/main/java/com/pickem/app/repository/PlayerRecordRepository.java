@@ -8,10 +8,10 @@ import java.util.Optional;
 
 @Repository
 public interface PlayerRecordRepository extends JpaRepository<PlayerRecord, Long> {
-    Optional<PlayerRecord> findByPlayerIdAndSportAndWeekNumber(Long playerId, String sport, Integer weekNumber);
-    List<PlayerRecord> findBySportAndWeekNumber(String sport, Integer weekNumber);
-    List<PlayerRecord> findBySport(String sport);
 
-    // Add this line:
-    List<PlayerRecord> findByWeekNumber(Integer weekNumber);
+    // Updated to require League ID
+    Optional<PlayerRecord> findByLeagueIdAndPlayerIdAndSportAndWeekNumber(Long leagueId, Long playerId, String sport, Integer weekNumber);
+    List<PlayerRecord> findByLeagueIdAndSportAndWeekNumber(Long leagueId, String sport, Integer weekNumber);
+    List<PlayerRecord> findByLeagueIdAndSport(Long leagueId, String sport);
+    List<PlayerRecord> findByLeagueIdAndWeekNumber(Long leagueId, Integer weekNumber);
 }
