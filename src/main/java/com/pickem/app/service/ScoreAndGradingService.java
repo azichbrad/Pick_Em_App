@@ -29,19 +29,23 @@ public class ScoreAndGradingService {
         this.playerRecordRepo = playerRecordRepo;
     }
 
-    @Scheduled(cron = "0 0 * * * *")
+    // 1. LIGHTWEIGHT SYNC: Runs every 3 hours, ONLY on game days, ONLY checking today (0-day lookback)
+    @Scheduled(cron = "0 0 */3 * * THU,SAT,SUN,MON", zone = "America/Los_Angeles")
     public void hourlyActiveSync() {
-        System.out.println("Starting lightweight hourly score sync...");
-        processScores(oddsService.getCompletedScores("NCAAF", 1));
-        processScores(oddsService.getCompletedScores("NFL", 1));
-        System.out.println("Hourly sync completed.");
+        System.out.println("Starting lightweight score sync...");
+        // 0 means it only fetches today's games, cutting API calls in half
+        processScores(oddsService.getCompletedScores("NCAAF", 0));
+        processScores(oddsService.getCompletedScores("NFL", 0));
+        System.out.println("Lightweight sync completed.");
     }
 
-    @Scheduled(cron = "0 0 2 * * *", zone = "America/Los_Angeles")
+    // 2. DEEP NIGHTLY SYNC: Runs once a day on Tuesday & Wednesday, looking back 4 days to catch late grades
+    @Scheduled(cron = "0 0 2 * * TUE,WED", zone = "America/Los_Angeles")
     public void nightlyDeepSync() {
         System.out.println("Starting heavy nightly deep score sync...");
-        processScores(oddsService.getCompletedScores("NCAAF", 10));
-        processScores(oddsService.getCompletedScores("NFL", 10));
+        // Reduced from 10 days to 4 days to save 12 requests per run
+        processScores(oddsService.getCompletedScores("NCAAF", 4));
+        processScores(oddsService.getCompletedScores("NFL", 4));
         System.out.println("Nightly deep sync completed.");
     }
 
