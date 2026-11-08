@@ -5,6 +5,7 @@ import com.pickem.app.model.Player;
 import com.pickem.app.model.PlayerRecord;
 import com.pickem.app.repository.GroupParlayPickRepository;
 import com.pickem.app.repository.PlayerRecordRepository;
+import com.pickem.app.repository.PickRepository; // 1. Import the PickRepository
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -17,35 +18,72 @@ public class ParlayService {
 
     private final PlayerRecordRepository playerRecordRepo;
     private final GroupParlayPickRepository parlayPickRepo;
+    private final PickRepository pickRepo; // 2. Add as a class field
 
-    public ParlayService(PlayerRecordRepository playerRecordRepo, GroupParlayPickRepository parlayPickRepo) {
+    // 3. Add to constructor parameters and assign it
+    public ParlayService(PlayerRecordRepository playerRecordRepo,
+                         GroupParlayPickRepository parlayPickRepo,
+                         PickRepository pickRepo) {
         this.playerRecordRepo = playerRecordRepo;
         this.parlayPickRepo = parlayPickRepo;
+        this.pickRepo = pickRepo;
     }
 
-    public String getParlayDutyNames(Long leagueId, int currentWeekNumber) {
-        int previousWeek = currentWeekNumber - 1;
-        if (previousWeek < 1) {
-            return "None (Week 1)";
+    public String getParlayDutyNames(Long leagueId, int masterWeekNumber) {
+        int ncaafEvalWeek = masterWeekNumber - 1;
+        int nflEvalWeek = masterWeekNumber - 2;
+
+        if (ncaafEvalWeek < 0) {
+            return "Pending (Season just started)";
         }
 
-        List<PlayerRecord> lastWeekRecords = playerRecordRepo.findByLeagueIdAndWeekNumber(leagueId, previousWeek);
-        if (lastWeekRecords.isEmpty()) {
-            return "Pending";
+        // Fetch the raw picks instead of the static records
+        List<com.pickem.app.model.Pick> cfbPicks = pickRepo.findByLeagueIdAndWeekNumberAndSport(leagueId, ncaafEvalWeek, "NCAAF");
+        List<com.pickem.app.model.Pick> nflPicks = new ArrayList<>();
+        if (nflEvalWeek > 0) {
+            nflPicks = pickRepo.findByLeagueIdAndWeekNumberAndSport(leagueId, nflEvalWeek, "NFL");
+        }
+
+        List<com.pickem.app.model.Pick> allPicks = new ArrayList<>();
+        if (cfbPicks != null) allPicks.addAll(cfbPicks);
+        if (nflPicks != null) allPicks.addAll(nflPicks);
+
+        if (allPicks.isEmpty()) {
+            return "Pending (No graded picks)";
+        }
+
+        // --- ADD THIS BLOCK ---
+        // Prevent premature calculation by checking if any games are still in progress
+        for (com.pickem.app.model.Pick pick : allPicks) {
+            if ("PENDING".equalsIgnoreCase(pick.getStatus()) || "LOCKED".equalsIgnoreCase(pick.getStatus())) {
+                return "Pending (Waiting on NFL)";
+            }
         }
 
         Map<Player, Integer> totalWins = new HashMap<>();
         Map<Player, Integer> totalGames = new HashMap<>();
 
-        for (PlayerRecord record : lastWeekRecords) {
-            Player player = record.getPlayer();
-            totalWins.merge(player, record.getWins(), Integer::sum);
+        // Aggregate wins directly from the graded picks
+        for (com.pickem.app.model.Pick pick : allPicks) {
+            if (pick.getPlayer() == null || pick.getStatus() == null) continue;
 
-            int gamesPlayed = record.getWins() + record.getLosses() + record.getPushes();
-            totalGames.merge(player, gamesPlayed, Integer::sum);
+            Player player = pick.getPlayer();
+            String status = pick.getStatus();
+
+            if (status.equals("WIN") || status.equals("LOSS") || status.equals("PUSH")) {
+                int gamesPlayed = totalGames.getOrDefault(player, 0) + 1;
+                totalGames.put(player, gamesPlayed);
+
+                if (status.equals("WIN")) {
+                    int wins = totalWins.getOrDefault(player, 0) + 1;
+                    totalWins.put(player, wins);
+                } else if (!totalWins.containsKey(player)) {
+                    totalWins.put(player, 0); // Ensure they are in the map even with 0 wins
+                }
+            }
         }
 
-        double worstPercentage = 1.1;
+        double worstPercentage = 2.0;
         Map<Player, Double> winPercentages = new HashMap<>();
 
         for (Map.Entry<Player, Integer> entry : totalWins.entrySet()) {
@@ -70,7 +108,9 @@ public class ParlayService {
             }
         }
 
-        if (losers.size() == 1) {
+        if (losers.isEmpty()) {
+            return "Pending";
+        } else if (losers.size() == 1) {
             return losers.get(0);
         } else if (losers.size() == 2) {
             return losers.get(0) + " & " + losers.get(1);

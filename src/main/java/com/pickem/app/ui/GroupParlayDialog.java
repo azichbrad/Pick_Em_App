@@ -76,7 +76,10 @@ public class GroupParlayDialog extends Dialog {
         setWidth("100%");
         setMaxWidth("520px");
 
-        setHeaderTitle("Weekly 5-Leg Parlay");
+        java.time.ZonedDateTime week0Sunday = java.time.ZonedDateTime.of(2026, 8, 23, 0, 0, 0, 0, java.time.ZoneId.of("America/Los_Angeles"));
+        String dateLabel = week0Sunday.plusWeeks(weekNumber).format(java.time.format.DateTimeFormatter.ofPattern("MMM d"));
+
+        setHeaderTitle("Weekly 5-Leg Parlay - " + dateLabel);
 
         VerticalLayout content = new VerticalLayout();
         content.setPadding(false);
