@@ -7,7 +7,6 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.dialog.Dialog;
-import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.textfield.IntegerField;
@@ -29,14 +28,14 @@ public class LeagueSettingsDialog extends Dialog {
         pickLimitField.setMin(1);
         pickLimitField.setMax(10);
         pickLimitField.setStepButtonsVisible(true);
-        // Note: adjust the getter/setter name if it's slightly different in your League model
-        pickLimitField.setValue(league.getPicksPerWeek());
+        // Safely check for null and default to 5 if empty
+        pickLimitField.setValue(league.getPicksPerWeek() != null ? league.getPicksPerWeek() : 5);
         pickLimitField.setWidthFull();
 
         // 3. Group Parlay Toggle
         Checkbox parlayCheckbox = new Checkbox("Enable Group Parlays");
-        // Note: adjust the getter/setter name if it's slightly different in your League model
-        parlayCheckbox.setValue(league.getEnableGroupParlay());
+        // Safely check for null and default to false if empty
+        parlayCheckbox.setValue(league.getEnableGroupParlay() != null ? league.getEnableGroupParlay() : false);
 
         // 4. Save Button
         Button saveBtn = new Button("Save Settings", e -> {
