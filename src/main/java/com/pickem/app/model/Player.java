@@ -20,6 +20,9 @@ public class Player {
     @Column(unique = true)
     private String email;
 
+    @Column(name = "is_premium", nullable = false)
+    private boolean isPremium = false;
+
     private boolean admin;
 
     // --- GETTERS AND SETTERS ---
@@ -43,4 +46,21 @@ public class Player {
 
     public boolean isAdmin() { return admin; }
     public void setAdmin(boolean admin) { this.admin = admin; }
+
+    public boolean isPremium() { return isPremium; }
+    public void setPremium(boolean premium) { isPremium = premium; }
+
+    /**
+     * Determines if the player has access to premium analytics.
+     * True if the player bought it themselves, OR if their league manager bought it for the group.
+     */
+    public boolean hasPremiumAccess(League currentLeague) {
+        if (this.isPremium) {
+            return true;
+        }
+        if (currentLeague != null && currentLeague.isPremium()) {
+            return true;
+        }
+        return false;
+    }
 }

@@ -165,16 +165,30 @@ public class DashboardView extends VerticalLayout {
         Span leagueDetails = new Span("CFB & NFL Weekly Pick Tracking");
         leagueDetails.getStyle().set("color", "#94a3b8").set("font-size", "0.85rem");
 
+        // 1. Primary Entry Button (Your existing logic)
         Button enterButton = new Button("Enter League Board", e -> {
             VaadinSession.getCurrent().setAttribute("league_id", league.getId());
             VaadinSession.getCurrent().setAttribute("league_name", league.getName());
             UI.getCurrent().navigate("board");
         });
         enterButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-        enterButton.setWidthFull();
         enterButton.getStyle().set("background-color", "#2563eb");
 
-        card.add(leagueTitle, leagueDetails, enterButton);
+        // 2. New Leaderboard Button
+        Button viewStandingsBtn = new Button("🏆 View Standings", e -> {
+            // Navigates directly to the LeaderboardView, passing the league ID
+            UI.getCurrent().navigate(LeaderboardView.class, league.getId());
+        });
+        viewStandingsBtn.addThemeVariants(ButtonVariant.LUMO_CONTRAST);
+
+        // 3. Horizontal Grouping
+        HorizontalLayout buttonLayout = new HorizontalLayout(enterButton, viewStandingsBtn);
+        buttonLayout.setWidthFull();
+        // Flex-grow ensures both buttons stretch equally to fill the card width
+        enterButton.getStyle().set("flex-grow", "1");
+        viewStandingsBtn.getStyle().set("flex-grow", "1");
+
+        card.add(leagueTitle, leagueDetails, buttonLayout);
         return card;
     }
 }

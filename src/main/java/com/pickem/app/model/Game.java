@@ -1,6 +1,10 @@
 package com.pickem.app.model;
+
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import java.time.Instant;
 
@@ -30,6 +34,10 @@ public class Game {
     private Integer homeScore;
     private Integer awayScore;
 
+    // --- ANALYTICS RELATIONSHIP ---
+    @OneToOne(mappedBy = "game", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private GameAnalytics analytics;
+
     // --- GETTERS AND SETTERS ---
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
@@ -43,7 +51,6 @@ public class Game {
     public String getAwayTeam() { return awayTeam; }
     public void setAwayTeam(String awayTeam) { this.awayTeam = awayTeam; }
 
-    // --- NEW LOGO GETTERS AND SETTERS ---
     public String getHomeLogo() { return homeLogo; }
     public void setHomeLogo(String homeLogo) { this.homeLogo = homeLogo; }
 
@@ -73,4 +80,7 @@ public class Game {
 
     public Integer getAwayScore() { return awayScore; }
     public void setAwayScore(Integer awayScore) { this.awayScore = awayScore; }
+
+    public GameAnalytics getAnalytics() { return analytics; }
+    public void setAnalytics(GameAnalytics analytics) { this.analytics = analytics; }
 }
