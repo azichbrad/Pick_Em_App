@@ -35,13 +35,15 @@ public class PickService {
     @Transactional
     public void savePickWithBurnCheck(Player player, Long leagueId, int slotNumber, String sport, int weekNumber,
                                       String selection, String logoUrl, String gameId, Double lockedPoint,
-                                      String matchName, String marketType, String selectionSide, Runnable onPickSaved) {
+                                      String matchName, String marketType, String selectionSide, boolean isAdmin, Runnable onPickSaved) {
 
         com.pickem.app.model.Game game = gameRepo.findById(gameId).orElse(null);
         if (game != null && game.getCommenceTime() != null) {
             java.time.Instant liveCutoff = java.time.Instant.now().minus(java.time.Duration.ofMinutes(15));
-            if (game.getCommenceTime().isBefore(liveCutoff)) {
-                Notification.show("Too late! This game has already locked.", 4000, Notification.Position.MIDDLE);
+
+            // The bypass goes on THIS line, where the actual time comparison happens
+            if (game.getCommenceTime().isBefore(liveCutoff) && !isAdmin) {
+                Notification.show("Too late! This game has already locked.");
                 return;
             }
         }

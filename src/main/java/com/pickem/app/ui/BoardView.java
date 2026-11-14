@@ -581,9 +581,14 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
 
                 boolean isOwnPick = currentUser != null && player.getName().equalsIgnoreCase(currentUser);
 
+                // --- NEW ADMIN OVERRIDE CHECK ---
+                // If the logged-in user is the league admin, we ignore the weekLocked and gameLocked booleans
+                boolean effectiveWeekLocked = weekLocked && !isLeagueAdmin;
+                boolean effectiveGameLocked = gameLocked && !isLeagueAdmin;
+
                 // --- SLOT CLICK ROUTING ---
                 if (existingPick != null && isLeagueAdmin) {
-                    // 1. COMMISSIONER MODE: Click any filled slot for the Admin Override + Swap option
+                    // 1. COMMISSIONER MODE (FILLED SLOT): Click any filled slot for the Admin Override + Swap option
                     slotButton.getStyle().set("cursor", "pointer");
                     slotButton.addClickListener(event -> {
                         AdminPickEditDialog dialog = new AdminPickEditDialog(
@@ -601,47 +606,44 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                         );
                         dialog.open();
                     });
-                } else if (weekLocked || gameLocked) {
-                    // 2. LOCKED OUT: Games have started or week is over
+                } else if (effectiveWeekLocked || effectiveGameLocked) {
+                    // 2. LOCKED OUT (STANDARD USER): Games have started or week is over
                     slotButton.getStyle().set("cursor", "default");
-                    if (weekLocked && existingPick == null) {
+                    if (effectiveWeekLocked && existingPick == null) {
                         slotButton.setText("🔒 Locked");
                         slotButton.getStyle()
                                 .set("color", "#475569")
                                 .set("background-color", "#0f172a")
                                 .set("border", "1px dashed #334155");
                     }
-                } else if (existingPick == null || isOwnPick) {
-                    // 3. STANDARD USER: Open a new slot, OR change their own unlocked pick
+                } else if (existingPick == null && isLeagueAdmin) {
+                    // 3. COMMISSIONER MODE (EMPTY SLOT): Admin filling an empty slot for a user, ignoring time locks
                     slotButton.getStyle().set("cursor", "pointer");
                     slotButton.addClickListener(event -> {
                         PickSelectionDialog dialog = new PickSelectionDialog(
-                                player,
-                                leagueId,
-                                currentSlot,
-                                sport,
-                                selectedWeek,
-                                oddsService,
-                                pickService,
-                                conferenceService,
-                                gameSyncService,
+                                player, leagueId, currentSlot, sport, selectedWeek,
+                                oddsService, pickService, conferenceService, gameSyncService,
+                                () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
+                        );
+                        dialog.open();
+                    });
+                } else if (existingPick == null || isOwnPick) {
+                    // 4. STANDARD USER: Open a new slot, OR change their own unlocked pick
+                    slotButton.getStyle().set("cursor", "pointer");
+                    slotButton.addClickListener(event -> {
+                        PickSelectionDialog dialog = new PickSelectionDialog(
+                                player, leagueId, currentSlot, sport, selectedWeek,
+                                oddsService, pickService, conferenceService, gameSyncService,
                                 () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
                         );
                         dialog.open();
                     });
                 } else {
+                    // 5. VIEWING ANOTHER PLAYER'S UNLOCKED PICK
                     slotButton.addClickListener(event -> {
-                        // PASSED LEAGUE ID HERE
                         PickSelectionDialog dialog = new PickSelectionDialog(
-                                player,
-                                leagueId,
-                                currentSlot,
-                                sport,
-                                selectedWeek,
-                                oddsService,
-                                pickService,
-                                conferenceService,
-                                gameSyncService,
+                                player, leagueId, currentSlot, sport, selectedWeek,
+                                oddsService, pickService, conferenceService, gameSyncService,
                                 () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
                         );
                         dialog.open();

@@ -234,12 +234,14 @@ public class PickSelectionDialog extends Dialog {
         int matchedCount = 0;
 
         // 3. RENDER THE UI
+        // 3. RENDER THE UI
         for (Game game : filteredGames) {
             String awayTeam = game.getAwayTeam() != null ? game.getAwayTeam() : "";
             String homeTeam = game.getHomeTeam() != null ? game.getHomeTeam() : "";
 
+            // ADMIN OVERRIDE: If the user is Azich, games are never locked.
             boolean isLiveOrFinished = game.getCommenceTime() != null &&
-                    game.getCommenceTime().isBefore(liveCutoff);
+                    game.getCommenceTime().isBefore(liveCutoff) && !this.isAdmin;
 
             boolean isCompleted = Boolean.TRUE.equals(game.getCompleted());
 
@@ -474,9 +476,11 @@ public class PickSelectionDialog extends Dialog {
 
         // 1. Pass an empty lambda () -> {} so the service doesn't trigger the UI refresh prematurely
         // Pass leagueId as the second argument here
+        // Pass this.isAdmin as a new argument here
         pickService.savePickWithBurnCheck(
                 player, leagueId, slotNumber, sport, weekNumber,
                 selection, logoUrl, gameId, lockedPoint, matchName, marketType, selectionSide,
+                this.isAdmin, // <--- ADD THIS LINE
                 () -> {
                     close();
                     if (onPickSaved != null) onPickSaved.run();
