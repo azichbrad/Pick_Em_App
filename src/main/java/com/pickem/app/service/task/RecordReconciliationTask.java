@@ -1,4 +1,4 @@
-package com.pickem.app.service;
+package com.pickem.app.service.task;
 
 import com.pickem.app.model.Pick;
 import com.pickem.app.model.PlayerRecord;

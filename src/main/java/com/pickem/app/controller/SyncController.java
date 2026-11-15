@@ -1,6 +1,6 @@
 package com.pickem.app.controller;
 
-import com.pickem.app.service.ScoreAndGradingService;
+import com.pickem.app.service.game.ScoreAndGradingService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;

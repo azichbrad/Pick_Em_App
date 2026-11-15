@@ -1,4 +1,4 @@
-package com.pickem.app.service;
+package com.pickem.app.service.player;
 
 import com.pickem.app.dto.LeaderboardEntryDTO;
 import com.pickem.app.model.Player;
@@ -9,8 +9,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 @Service
 public class LeaderboardService {

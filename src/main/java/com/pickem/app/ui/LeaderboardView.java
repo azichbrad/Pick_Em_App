@@ -1,7 +1,7 @@
 package com.pickem.app.ui;
 
 import com.pickem.app.dto.LeaderboardEntryDTO;
-import com.pickem.app.service.LeaderboardService;
+import com.pickem.app.service.player.LeaderboardService;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;

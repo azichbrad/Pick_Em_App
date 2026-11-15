@@ -1,4 +1,4 @@
-package com.pickem.app.service;
+package com.pickem.app.service.game;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.pickem.app.model.Game;
@@ -8,6 +8,7 @@ import com.pickem.app.model.PlayerRecord;
 import com.pickem.app.repository.GameRepository;
 import com.pickem.app.repository.PickRepository;
 import com.pickem.app.repository.PlayerRecordRepository;
+import com.pickem.app.service.api.CfbdSyncService;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -30,15 +31,17 @@ public class ScoreAndGradingService {
     private final PickRepository pickRepository;
     private final PlayerRecordRepository playerRecordRepo;
     private final RestTemplate restTemplate;
+    private final CfbdSyncService cfbdSyncService;
 
     public ScoreAndGradingService(GameRepository gameRepository,
                                   PickRepository pickRepository,
                                   PlayerRecordRepository playerRecordRepo,
-                                  RestTemplateBuilder restTemplateBuilder) {
+                                  RestTemplateBuilder restTemplateBuilder, CfbdSyncService cfbdSyncService) {
         this.gameRepository = gameRepository;
         this.pickRepository = pickRepository;
         this.playerRecordRepo = playerRecordRepo;
         this.restTemplate = restTemplateBuilder.build();
+        this.cfbdSyncService = cfbdSyncService;
     }
 
     // 1. ACTIVE GAMEDAY SYNC: Runs every hour on the hour during game days
@@ -160,6 +163,17 @@ public class ScoreAndGradingService {
 
                     dbGame.setCompleted(true);
                     gameRepository.save(dbGame);
+                    // Fire off the CFBD fetch asynchronously so it doesn't block your grading loop
+                    java.util.concurrent.CompletableFuture.runAsync(() -> {
+                        try {
+                            // NOTE: You will need to pass the current season year and week number here.
+                            // If you don't have them as variables in this method, you can hardcode (e.g., 2026, 11)
+                            // for now, or extract them from dbGame.getCommenceTime().
+                            cfbdSyncService.fetchAndSaveAdvancedBoxScore(dbGame.getId(), 2026, 11);
+                        } catch (Exception e) {
+                            System.err.println("Failed to sync CFBD stats: " + e.getMessage());
+                        }
+                    });
                     System.out.println("✅ Graded via ESPN: " + dbGame.getAwayTeam() + " (" + dbGame.getAwayScore() + ") @ " + dbGame.getHomeTeam() + " (" + dbGame.getHomeScore() + ")");
 
                     gradePicksForGame(dbGame);

@@ -1,4 +1,4 @@
-package com.pickem.app.service;
+package com.pickem.app.service.game;
 
 import com.pickem.app.model.Game;
 import com.pickem.app.model.GameAnalytics;
@@ -6,8 +6,6 @@ import com.pickem.app.repository.GameAnalyticsRepository;
 import com.pickem.app.repository.GameRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.Optional;
 
 @Service
 public class GameAnalyticsService {

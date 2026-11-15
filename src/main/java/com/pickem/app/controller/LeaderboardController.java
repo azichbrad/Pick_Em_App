@@ -1,7 +1,7 @@
 package com.pickem.app.controller;
 
 import com.pickem.app.dto.LeaderboardEntryDTO;
-import com.pickem.app.service.LeaderboardService;
+import com.pickem.app.service.player.LeaderboardService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
