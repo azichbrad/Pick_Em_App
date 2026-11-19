@@ -1,5 +1,6 @@
-package com.pickem.app.service;
+package com.pickem.app.service.task;
 
+import com.pickem.app.service.api.GameSyncService;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 

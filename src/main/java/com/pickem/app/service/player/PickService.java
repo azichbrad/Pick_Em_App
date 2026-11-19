@@ -1,4 +1,4 @@
-package com.pickem.app.service;
+package com.pickem.app.service.player;
 
 import com.pickem.app.model.BurnedSelection;
 import com.pickem.app.model.Pick;

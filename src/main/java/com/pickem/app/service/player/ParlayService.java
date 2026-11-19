@@ -1,8 +1,7 @@
-package com.pickem.app.service;
+package com.pickem.app.service.player;
 
 import com.pickem.app.model.GroupParlayPick;
 import com.pickem.app.model.Player;
-import com.pickem.app.model.PlayerRecord;
 import com.pickem.app.repository.GroupParlayPickRepository;
 import com.pickem.app.repository.PlayerRecordRepository;
 import com.pickem.app.repository.PickRepository; // 1. Import the PickRepository

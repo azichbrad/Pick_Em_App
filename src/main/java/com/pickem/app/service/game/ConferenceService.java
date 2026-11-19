@@ -1,4 +1,4 @@
-package com.pickem.app.service;
+package com.pickem.app.service.game;
 
 import com.pickem.app.dto.TeamDTO;
 import org.springframework.beans.factory.annotation.Value;

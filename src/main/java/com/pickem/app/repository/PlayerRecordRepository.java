@@ -13,5 +13,8 @@ public interface PlayerRecordRepository extends JpaRepository<PlayerRecord, Long
     Optional<PlayerRecord> findByLeagueIdAndPlayerIdAndSportAndWeekNumber(Long leagueId, Long playerId, String sport, Integer weekNumber);
     List<PlayerRecord> findByLeagueIdAndSportAndWeekNumber(Long leagueId, String sport, Integer weekNumber);
     List<PlayerRecord> findByLeagueIdAndSport(Long leagueId, String sport);
+    List<PlayerRecord> findByLeagueIdAndPlayerIdAndWeekNumber(Long leagueId, Long playerId, int weekNumber);
+    List<PlayerRecord> findByLeagueIdAndPlayerId(Long leagueId, Long playerId);
+    List<PlayerRecord> findByLeagueIdAndPlayerIdAndSport(Long leagueId, Long playerId, String sport);
     List<PlayerRecord> findByLeagueIdAndWeekNumber(Long leagueId, Integer weekNumber);
 }

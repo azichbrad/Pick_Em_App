@@ -1,4 +1,4 @@
-package com.pickem.app.service;
+package com.pickem.app.service.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.pickem.app.dto.GameOddsDTO;
@@ -12,6 +12,7 @@ import com.pickem.app.repository.OddsHistoryRepository;
 import com.pickem.app.repository.PickRepository;
 import com.pickem.app.repository.PlayerRecordRepository;
 import com.pickem.app.repository.PlayerRepository;
+import com.pickem.app.service.game.OddsService;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -21,7 +22,6 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 

@@ -1,4 +1,4 @@
-package com.pickem.app.service;
+package com.pickem.app.service.game;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.pickem.app.model.Game;
@@ -8,6 +8,7 @@ import com.pickem.app.model.PlayerRecord;
 import com.pickem.app.repository.GameRepository;
 import com.pickem.app.repository.PickRepository;
 import com.pickem.app.repository.PlayerRecordRepository;
+import com.pickem.app.service.api.CfbdSyncService;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -30,15 +31,17 @@ public class ScoreAndGradingService {
     private final PickRepository pickRepository;
     private final PlayerRecordRepository playerRecordRepo;
     private final RestTemplate restTemplate;
+    private final CfbdSyncService cfbdSyncService;
 
     public ScoreAndGradingService(GameRepository gameRepository,
                                   PickRepository pickRepository,
                                   PlayerRecordRepository playerRecordRepo,
-                                  RestTemplateBuilder restTemplateBuilder) {
+                                  RestTemplateBuilder restTemplateBuilder, CfbdSyncService cfbdSyncService) {
         this.gameRepository = gameRepository;
         this.pickRepository = pickRepository;
         this.playerRecordRepo = playerRecordRepo;
         this.restTemplate = restTemplateBuilder.build();
+        this.cfbdSyncService = cfbdSyncService;
     }
 
     // 1. ACTIVE GAMEDAY SYNC: Runs every hour on the hour during game days
@@ -121,6 +124,7 @@ public class ScoreAndGradingService {
         for (JsonNode espnGame : espnGames) {
             JsonNode competition = espnGame.path("competitions").get(0);
             JsonNode competitors = competition.path("competitors");
+            java.time.Instant espnKickoff = parseEspnDate(espnGame.path("date").asText(""));
 
             String team1Name = "", team2Name = "";
             int team1Score = 0, team2Score = 0;
@@ -142,11 +146,22 @@ public class ScoreAndGradingService {
                 if (dbGame.getSport() != null && !sport.equalsIgnoreCase(dbGame.getSport())) continue;
                 if (dbGame.getCommenceTime() != null && dbGame.getCommenceTime().isAfter(java.time.Instant.now())) continue;
 
+                // Prevent rematch collisions by requiring kickoff dates to be within 48 hours
+                if (espnKickoff != null && dbGame.getCommenceTime() != null) {
+                    long hoursDiff = Math.abs(java.time.Duration.between(dbGame.getCommenceTime(), espnKickoff).toHours());
+                    if (hoursDiff > 48) continue;
+                }
+
                 boolean directMatch = isTeamMatch(dbGame.getHomeTeam(), team1Name) && isTeamMatch(dbGame.getAwayTeam(), team2Name);
                 boolean swappedMatch = isTeamMatch(dbGame.getHomeTeam(), team2Name) && isTeamMatch(dbGame.getAwayTeam(), team1Name);
 
                 if (directMatch || swappedMatch) {
-                    matchedEspnGames.add(team1Name + "_" + team2Name); // Mark as matched
+                    matchedEspnGames.add(team1Name + "_" + team2Name);
+
+                    // Already graded — skip redundant DB write
+                    if (Boolean.TRUE.equals(dbGame.getCompleted())) {
+                        break;
+                    }
 
                     System.out.println("🎯 MATCH FOUND IN DB FOR: " + dbGame.getAwayTeam() + " @ " + dbGame.getHomeTeam());
 
@@ -184,6 +199,15 @@ public class ScoreAndGradingService {
         }
         System.out.println("--------------------------------------------------");
         System.out.println("Matched " + (espnGames.size() - unmatchedCount) + " out of " + espnGames.size() + " completed ESPN games.");
+    }
+
+    private java.time.Instant parseEspnDate(String isoDate) {
+        if (isoDate == null || isoDate.isBlank()) return null;
+        try {
+            return java.time.OffsetDateTime.parse(isoDate).toInstant();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @Transactional
