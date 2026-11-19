@@ -35,8 +35,6 @@ public class Game {
     private Integer awayScore;
 
     // --- ANALYTICS RELATIONSHIP ---
-    @OneToOne(mappedBy = "game", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    private GameAnalytics analytics;
 
     // --- GETTERS AND SETTERS ---
     public String getId() { return id; }
@@ -81,6 +79,4 @@ public class Game {
     public Integer getAwayScore() { return awayScore; }
     public void setAwayScore(Integer awayScore) { this.awayScore = awayScore; }
 
-    public GameAnalytics getAnalytics() { return analytics; }
-    public void setAnalytics(GameAnalytics analytics) { this.analytics = analytics; }
 }

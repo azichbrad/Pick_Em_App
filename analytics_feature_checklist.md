@@ -6,14 +6,14 @@
 - [x] Add advanced metric fields to the `GameAnalytics` entity: `awayEpa`, `homeEpa`, `awaySuccessRate`, `homeSuccessRate`, `awayHavoc`, and `aiStoryline`.
 
 ## Phase 2: Data Pipelines (The Engines)
-- [ ] Build a Spring Boot REST client for the free CollegeFootballData (CFBD) API to pull ATS records, Havoc, and Finishing Drives.
-- [ ] Write a lightweight Python script using the `nflverse` (`nfl-data-py`) library to fetch weekly NFL EPA and success rates.
-- [ ] Set up the Python script to run on the Raspberry Pi and push a JSON payload to a secure endpoint on the Spring Boot app.
+- [x] Build a Spring Boot REST client for the free CollegeFootballData (CFBD) API to pull ATS records, Havoc, and Finishing Drives.
+- [x] Write a lightweight Python script using the `nflverse` (`nfl-data-py`) library to fetch weekly NFL EPA and success rates.
+- [x] Set up the Python script to run on the Raspberry Pi and push a JSON payload to a secure endpoint on the Spring Boot app.
 - [ ] Set up a method to send raw game stats and ESPN injury data to the Gemini API to generate a 2-sentence "Game Vibe & Storyline".
 
 ## Phase 3: Service Layer & Scheduling
-- [ ] Create an `AnalyticsService` that takes the raw data from CFBD, the NFL payload, and Gemini, normalizes it, and saves it to the `GameAnalytics` table.
-- [ ] Add a new `@Scheduled` cron job set to run Thursday mornings to ensure all analytics are generated before the weekend's games start.
+- [x] Create an `AnalyticsService` that takes the raw data from CFBD, the NFL payload, and Gemini, normalizes it, and saves it to the `GameAnalytics` table.
+- [x] Add a new `@Scheduled` cron job set to run Thursday mornings to ensure all analytics are generated before the weekend's games start.
 
 ## Phase 4: Vaadin UI (The Paywall & Visuals)
 - [ ] Add a "📊 Analytics" button or icon next to each matchup on the existing weekly board view.

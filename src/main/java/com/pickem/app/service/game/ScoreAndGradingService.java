@@ -124,6 +124,7 @@ public class ScoreAndGradingService {
         for (JsonNode espnGame : espnGames) {
             JsonNode competition = espnGame.path("competitions").get(0);
             JsonNode competitors = competition.path("competitors");
+            java.time.Instant espnKickoff = parseEspnDate(espnGame.path("date").asText(""));
 
             String team1Name = "", team2Name = "";
             int team1Score = 0, team2Score = 0;
@@ -145,11 +146,22 @@ public class ScoreAndGradingService {
                 if (dbGame.getSport() != null && !sport.equalsIgnoreCase(dbGame.getSport())) continue;
                 if (dbGame.getCommenceTime() != null && dbGame.getCommenceTime().isAfter(java.time.Instant.now())) continue;
 
+                // Prevent rematch collisions by requiring kickoff dates to be within 48 hours
+                if (espnKickoff != null && dbGame.getCommenceTime() != null) {
+                    long hoursDiff = Math.abs(java.time.Duration.between(dbGame.getCommenceTime(), espnKickoff).toHours());
+                    if (hoursDiff > 48) continue;
+                }
+
                 boolean directMatch = isTeamMatch(dbGame.getHomeTeam(), team1Name) && isTeamMatch(dbGame.getAwayTeam(), team2Name);
                 boolean swappedMatch = isTeamMatch(dbGame.getHomeTeam(), team2Name) && isTeamMatch(dbGame.getAwayTeam(), team1Name);
 
                 if (directMatch || swappedMatch) {
-                    matchedEspnGames.add(team1Name + "_" + team2Name); // Mark as matched
+                    matchedEspnGames.add(team1Name + "_" + team2Name);
+
+                    // Already graded — skip redundant DB write
+                    if (Boolean.TRUE.equals(dbGame.getCompleted())) {
+                        break;
+                    }
 
                     System.out.println("🎯 MATCH FOUND IN DB FOR: " + dbGame.getAwayTeam() + " @ " + dbGame.getHomeTeam());
 
@@ -163,17 +175,6 @@ public class ScoreAndGradingService {
 
                     dbGame.setCompleted(true);
                     gameRepository.save(dbGame);
-                    // Fire off the CFBD fetch asynchronously so it doesn't block your grading loop
-                    java.util.concurrent.CompletableFuture.runAsync(() -> {
-                        try {
-                            // NOTE: You will need to pass the current season year and week number here.
-                            // If you don't have them as variables in this method, you can hardcode (e.g., 2026, 11)
-                            // for now, or extract them from dbGame.getCommenceTime().
-                            cfbdSyncService.fetchAndSaveAdvancedBoxScore(dbGame.getId(), 2026, 11);
-                        } catch (Exception e) {
-                            System.err.println("Failed to sync CFBD stats: " + e.getMessage());
-                        }
-                    });
                     System.out.println("✅ Graded via ESPN: " + dbGame.getAwayTeam() + " (" + dbGame.getAwayScore() + ") @ " + dbGame.getHomeTeam() + " (" + dbGame.getHomeScore() + ")");
 
                     gradePicksForGame(dbGame);
@@ -198,6 +199,15 @@ public class ScoreAndGradingService {
         }
         System.out.println("--------------------------------------------------");
         System.out.println("Matched " + (espnGames.size() - unmatchedCount) + " out of " + espnGames.size() + " completed ESPN games.");
+    }
+
+    private java.time.Instant parseEspnDate(String isoDate) {
+        if (isoDate == null || isoDate.isBlank()) return null;
+        try {
+            return java.time.OffsetDateTime.parse(isoDate).toInstant();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @Transactional

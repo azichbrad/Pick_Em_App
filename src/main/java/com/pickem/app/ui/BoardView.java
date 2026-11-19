@@ -33,6 +33,7 @@ import com.vaadin.flow.theme.lumo.Lumo;
 import jakarta.annotation.security.PermitAll;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import com.pickem.app.service.game.GameAnalyticsService;
 
 import java.util.List;
 import java.util.stream.IntStream;
@@ -52,13 +53,14 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
     private final ParlayService parlayService;
     private final LeagueMemberRepository leagueMemberRepo;
     private final LeagueRepository leagueRepo; // 1. Added LeagueRepository
+    private final GameAnalyticsService analyticsService;
 
     public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService,
                      ConferenceService conferenceService,
                      GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo,
                      PickService pickService, ParlayService parlayService,
                      LeagueMemberRepository leagueMemberRepo,
-                     LeagueRepository leagueRepo) { // Inject it here
+                     LeagueRepository leagueRepo, GameAnalyticsService analyticsService) { // Inject it here
         this.playerRepo = playerRepo;
         this.pickRepo = pickRepo;
         this.oddsService = oddsService;
@@ -69,6 +71,7 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         this.pickService = pickService;
         this.leagueMemberRepo = leagueMemberRepo;
         this.leagueRepo = leagueRepo;
+        this.analyticsService = analyticsService;
 
         getElement().setAttribute("theme", Lumo.DARK);
         setSizeFull();
@@ -243,7 +246,8 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         HorizontalLayout controls = new HorizontalLayout();
         controls.setWidthFull();
         controls.setJustifyContentMode(JustifyContentMode.BETWEEN);
-        controls.setAlignItems(Alignment.CENTER);
+        controls.setAlignItems(Alignment.END);
+        controls.getStyle().set("flex-wrap", "wrap").set("gap", "8px");
 
         int minWeek = sport.equals("NCAAF") ? 0 : 1;
         int maxWeek = sport.equals("NCAAF") ? 19 : 18;
@@ -279,7 +283,31 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         HorizontalLayout leftControls = new HorizontalLayout(prevButton, weekSelector, nextButton);
         leftControls.setAlignItems(Alignment.END);
 
-        controls.add(leftControls);
+        String statsLabel = "NCAAF".equalsIgnoreCase(sport) ? "📊 CFB Stats" : "📊 NFL Stats";
+        Button analyticsBtn = new Button(statsLabel, e -> {
+            Integer selectedWeek = weekSelector.getValue();
+            boolean isPremium = isCurrentUserPremium();
+            List<com.pickem.app.model.Game> weeklyGames =
+                    gameSyncService.getGamesForSportAndWeekFromDb(sport, selectedWeek);
+
+            AnalyticsDialog dialog = new AnalyticsDialog(
+                    sport,
+                    formatWeekLabel(sport, selectedWeek),
+                    isPremium,
+                    weeklyGames,
+                    analyticsService
+            );
+            dialog.open();
+        });
+        analyticsBtn.getStyle()
+                .set("background", "rgba(56, 189, 248, 0.14)")
+                .set("color", "#38bdf8")
+                .set("border", "1px solid rgba(56, 189, 248, 0.35)")
+                .set("border-radius", "9999px")
+                .set("font-weight", "600")
+                .set("cursor", "pointer");
+
+        controls.add(leftControls, analyticsBtn);
 
         prevButton.setEnabled(weekSelector.getValue() > minWeek);
         nextButton.setEnabled(weekSelector.getValue() < maxWeek);
@@ -721,5 +749,33 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         }
 
         return now.format(java.time.format.DateTimeFormatter.ofPattern("MMM d"));
+    }
+
+    private boolean isCurrentUserPremium() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+
+        String email = null;
+        String name = null;
+        if (auth.getPrincipal() instanceof org.springframework.security.oauth2.core.user.OAuth2User oauthUser) {
+            email = oauthUser.getAttribute("email");
+            name = oauthUser.getAttribute("name");
+            if (name == null) name = oauthUser.getAttribute("given_name");
+        }
+        if (name == null || name.isBlank()) {
+            name = auth.getName();
+        }
+
+        final String finalEmail = email != null ? email.toLowerCase() : "";
+        final String finalName = name != null ? name.toLowerCase() : "";
+
+        return playerRepo.findAll().stream()
+                .filter(p -> (!finalEmail.isEmpty() && p.getEmail() != null && p.getEmail().equalsIgnoreCase(finalEmail))
+                        || (!finalName.isEmpty() && p.getName() != null &&
+                        (finalName.contains(p.getName().toLowerCase()) || p.getName().toLowerCase().contains(finalName))))
+                .findFirst()
+                // Swap to Boolean.TRUE.equals(p.getIsPremium()) if your Player field is a boxed Boolean
+                .map(Player::isPremium)
+                .orElse(false);
     }
 }
