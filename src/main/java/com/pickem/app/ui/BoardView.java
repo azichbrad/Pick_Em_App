@@ -752,6 +752,19 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
     }
 
     private boolean isCurrentUserPremium() {
+        // 1. Check league-wide PRO access first
+        VaadinSession session = VaadinSession.getCurrent();
+        Long currentLeagueId = session != null ? (Long) session.getAttribute("league_id") : null;
+        if (currentLeagueId != null) {
+            boolean isPremiumLeague = leagueRepo.findById(currentLeagueId)
+                    .map(League::isPremium)
+                    .orElse(false);
+            if (isPremiumLeague) {
+                return true;
+            }
+        }
+
+        // 2. Fallback to individual Player PRO access
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null) return false;
 
@@ -766,16 +779,30 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
             name = auth.getName();
         }
 
-        final String finalEmail = email != null ? email.toLowerCase() : "";
-        final String finalName = name != null ? name.toLowerCase() : "";
+        final String finalEmail = email != null ? email.trim().toLowerCase() : "";
+        final String finalName = name != null ? name.trim().toLowerCase() : "";
 
-        return playerRepo.findAll().stream()
-                .filter(p -> (!finalEmail.isEmpty() && p.getEmail() != null && p.getEmail().equalsIgnoreCase(finalEmail))
-                        || (!finalName.isEmpty() && p.getName() != null &&
-                        (finalName.contains(p.getName().toLowerCase()) || p.getName().toLowerCase().contains(finalName))))
-                .findFirst()
-                // Swap to Boolean.TRUE.equals(p.getIsPremium()) if your Player field is a boxed Boolean
-                .map(Player::isPremium)
-                .orElse(false);
+        List<Player> allPlayers = playerRepo.findAll();
+
+        // Exact email match takes priority over partial name match
+        if (!finalEmail.isEmpty()) {
+            var byEmail = allPlayers.stream()
+                    .filter(p -> p.getEmail() != null && p.getEmail().equalsIgnoreCase(finalEmail))
+                    .findFirst();
+            if (byEmail.isPresent()) {
+                return byEmail.get().isPremium();
+            }
+        }
+
+        if (!finalName.isEmpty()) {
+            return allPlayers.stream()
+                    .filter(p -> p.getName() != null &&
+                            (finalName.contains(p.getName().toLowerCase()) || p.getName().toLowerCase().contains(finalName)))
+                    .findFirst()
+                    .map(Player::isPremium)
+                    .orElse(false);
+        }
+
+        return false;
     }
 }
