@@ -6,6 +6,7 @@ import com.pickem.app.repository.GameRepository;
 import com.pickem.app.service.game.GameAnalyticsService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.HashMap;
 import java.util.List;
@@ -22,6 +23,9 @@ public class NflAnalyticsController {
         this.gameRepo = gameRepo;
         this.analyticsService = analyticsService;
     }
+
+    @Value("${NFL_WEBHOOK_SECRET}")
+    private String webhookSecret;
 
     @PostMapping("/sync")
     public ResponseEntity<String> receiveNflData(
