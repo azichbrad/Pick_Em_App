@@ -38,7 +38,7 @@ public class League {
     private Instant createdAt = Instant.now();
 
     @Column(name = "is_premium", nullable = false)
-    private boolean isPremium = false;
+    private Boolean isPremium = false;
 
     @OneToMany(mappedBy = "league", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<LeagueMember> members = new ArrayList<>();
@@ -80,6 +80,6 @@ public class League {
     public List<LeagueMember> getMembers() { return members; }
     public void setMembers(List<LeagueMember> members) { this.members = members; }
 
-    public boolean isPremium() { return isPremium; }
+    public boolean isPremium() { return Boolean.TRUE.equals(isPremium); }
     public void setPremium(boolean premium) { isPremium = premium; }
 }
