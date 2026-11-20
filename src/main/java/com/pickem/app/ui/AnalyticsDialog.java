@@ -908,7 +908,7 @@ public class AnalyticsDialog extends Dialog {
         leagueBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
         leagueBtn.setWidthFull();
 
-        Button playerBtn = new Button("Unlock for Just Me", e -> {
+        Button playerBtn = new Button("Unlock for Just Me ($5)", e -> {
             chooser.close();
             launchCheckout(false);
         });
