@@ -19,7 +19,10 @@ public class SecurityConfiguration extends VaadinWebSecurity {
     @Override
     protected void configure(WebSecurity web) throws Exception {
         super.configure(web);
-        // Completely bypasses Spring Security (CSRF and OAuth) for your API webhook endpoints
-        web.ignoring().requestMatchers("/api/sync/**", "/api/analytics/nfl/sync");
+        web.ignoring().requestMatchers(
+                "/api/sync/**",
+                "/api/analytics/nfl/sync",
+                "/api/analytics/ats/**"
+        );
     }
 }

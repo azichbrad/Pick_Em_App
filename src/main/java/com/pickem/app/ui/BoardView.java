@@ -15,6 +15,7 @@ import com.pickem.app.service.game.ConferenceService;
 import com.pickem.app.service.game.OddsService;
 import com.pickem.app.service.player.ParlayService;
 import com.pickem.app.service.player.PickService;
+import com.pickem.app.service.game.TeamAtsService;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.dependency.CssImport;
@@ -54,13 +55,14 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
     private final LeagueMemberRepository leagueMemberRepo;
     private final LeagueRepository leagueRepo; // 1. Added LeagueRepository
     private final GameAnalyticsService analyticsService;
+    private final TeamAtsService teamAtsService;
 
     public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService,
                      ConferenceService conferenceService,
                      GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo,
                      PickService pickService, ParlayService parlayService,
                      LeagueMemberRepository leagueMemberRepo,
-                     LeagueRepository leagueRepo, GameAnalyticsService analyticsService) { // Inject it here
+                     LeagueRepository leagueRepo, GameAnalyticsService analyticsService, TeamAtsService teamAtsService) { // Inject it here
         this.playerRepo = playerRepo;
         this.pickRepo = pickRepo;
         this.oddsService = oddsService;
@@ -72,6 +74,7 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         this.leagueMemberRepo = leagueMemberRepo;
         this.leagueRepo = leagueRepo;
         this.analyticsService = analyticsService;
+        this.teamAtsService = teamAtsService;
 
         getElement().setAttribute("theme", Lumo.DARK);
         setSizeFull();
@@ -295,7 +298,8 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                     formatWeekLabel(sport, selectedWeek),
                     isPremium,
                     weeklyGames,
-                    analyticsService
+                    analyticsService,
+                    teamAtsService
             );
             dialog.open();
         });
