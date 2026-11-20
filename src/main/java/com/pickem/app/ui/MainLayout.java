@@ -4,14 +4,15 @@ import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.html.Div;
-import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.router.RouterLayout;
 import com.vaadin.flow.router.RouterLink;
+import com.vaadin.flow.server.VaadinServletRequest;
 import com.vaadin.flow.server.VaadinSession;
 import com.vaadin.flow.component.html.Image;
+import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
 
 public class MainLayout extends Div implements RouterLayout {
 
@@ -71,8 +72,11 @@ public class MainLayout extends Div implements RouterLayout {
                 .set("text-decoration", "none");
 
         Button logoutBtn = new Button("Sign Out", e -> {
-            VaadinSession.getCurrent().getSession().invalidate();
-            UI.getCurrent().getPage().setLocation("/logout");
+            UI.getCurrent().getPage().setLocation("/");
+            SecurityContextLogoutHandler logoutHandler = new SecurityContextLogoutHandler();
+            logoutHandler.logout(
+                    VaadinServletRequest.getCurrent().getHttpServletRequest(), null, null
+            );
         });
         logoutBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
         logoutBtn.getStyle().set("color", "#ef4444").set("font-size", "0.85rem");

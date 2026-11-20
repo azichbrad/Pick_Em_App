@@ -11,11 +11,15 @@ import com.pickem.app.repository.PickRepository;
 import com.pickem.app.repository.PlayerRecordRepository;
 import com.pickem.app.repository.PlayerRepository;
 import com.pickem.app.service.api.GameSyncService;
+import com.pickem.app.service.billing.StripeCheckoutService;
 import com.pickem.app.service.game.ConferenceService;
 import com.pickem.app.service.game.OddsService;
 import com.pickem.app.service.player.ParlayService;
 import com.pickem.app.service.player.PickService;
 import com.pickem.app.service.game.TeamAtsService;
+import com.pickem.app.service.billing.StripeCheckoutService;
+import com.vaadin.flow.component.notification.Notification;
+import com.vaadin.flow.component.notification.NotificationVariant;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.dependency.CssImport;
@@ -56,13 +60,14 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
     private final LeagueRepository leagueRepo; // 1. Added LeagueRepository
     private final GameAnalyticsService analyticsService;
     private final TeamAtsService teamAtsService;
+    private final StripeCheckoutService stripeCheckoutService;
 
     public BoardView(PlayerRepository playerRepo, PickRepository pickRepo, OddsService oddsService,
                      ConferenceService conferenceService,
                      GameSyncService gameSyncService, PlayerRecordRepository playerRecordRepo,
                      PickService pickService, ParlayService parlayService,
                      LeagueMemberRepository leagueMemberRepo,
-                     LeagueRepository leagueRepo, GameAnalyticsService analyticsService, TeamAtsService teamAtsService) { // Inject it here
+                     LeagueRepository leagueRepo, GameAnalyticsService analyticsService, TeamAtsService teamAtsService, StripeCheckoutService stripeCheckoutService) { // Inject it here
         this.playerRepo = playerRepo;
         this.pickRepo = pickRepo;
         this.oddsService = oddsService;
@@ -75,6 +80,7 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         this.leagueRepo = leagueRepo;
         this.analyticsService = analyticsService;
         this.teamAtsService = teamAtsService;
+        this.stripeCheckoutService = stripeCheckoutService;
 
         getElement().setAttribute("theme", Lumo.DARK);
         setSizeFull();
@@ -89,6 +95,26 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         Long currentLeagueId = (Long) VaadinSession.getCurrent().getAttribute("league_id");
         if (currentLeagueId == null) {
             event.forwardTo(DashboardView.class);
+            return;
+        }
+
+        List<String> proParam = event.getLocation().getQueryParameters().getParameters().get("pro");
+        if (proParam != null && !proParam.isEmpty()) {
+            String status = proParam.get(0);
+            if ("success".equalsIgnoreCase(status)) {
+                Notification toast = Notification.show(
+                        "🎉 Payment received! Your PRO Analytics are now unlocked.",
+                        6000,
+                        Notification.Position.TOP_CENTER
+                );
+                toast.addThemeVariants(NotificationVariant.LUMO_SUCCESS);
+            } else if ("canceled".equalsIgnoreCase(status)) {
+                Notification.show(
+                        "Checkout canceled — no charge was made.",
+                        4000,
+                        Notification.Position.TOP_CENTER
+                );
+            }
         }
     }
 
@@ -293,13 +319,22 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
             List<com.pickem.app.model.Game> weeklyGames =
                     gameSyncService.getGamesForSportAndWeekFromDb(sport, selectedWeek);
 
+            Long activeLeagueId = (Long) VaadinSession.getCurrent().getAttribute("league_id");
+            Player currentPlayer = findCurrentPlayer();
+            Long currentPlayerId = currentPlayer != null ? currentPlayer.getId() : null;
+            String currentEmail = getCurrentUserEmail(currentPlayer);
+
             AnalyticsDialog dialog = new AnalyticsDialog(
                     sport,
                     formatWeekLabel(sport, selectedWeek),
                     isPremium,
                     weeklyGames,
                     analyticsService,
-                    teamAtsService
+                    teamAtsService,
+                    stripeCheckoutService,
+                    activeLeagueId,
+                    currentPlayerId,
+                    currentEmail
             );
             dialog.open();
         });
@@ -808,5 +843,53 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
         }
 
         return false;
+    }
+
+    private Player findCurrentPlayer() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return null;
+
+        String email = null;
+        String name = null;
+        if (auth.getPrincipal() instanceof org.springframework.security.oauth2.core.user.OAuth2User oauthUser) {
+            email = oauthUser.getAttribute("email");
+            name = oauthUser.getAttribute("name");
+            if (name == null) name = oauthUser.getAttribute("given_name");
+        }
+        if (name == null || name.isBlank()) {
+            name = auth.getName();
+        }
+
+        final String finalEmail = email != null ? email.trim().toLowerCase() : "";
+        final String finalName = name != null ? name.trim().toLowerCase() : "";
+
+        List<Player> allPlayers = playerRepo.findAll();
+
+        if (!finalEmail.isEmpty()) {
+            var byEmail = allPlayers.stream()
+                    .filter(p -> p.getEmail() != null && p.getEmail().equalsIgnoreCase(finalEmail))
+                    .findFirst();
+            if (byEmail.isPresent()) return byEmail.get();
+        }
+
+        if (!finalName.isEmpty()) {
+            return allPlayers.stream()
+                    .filter(p -> p.getName() != null &&
+                            (finalName.contains(p.getName().toLowerCase()) || p.getName().toLowerCase().contains(finalName)))
+                    .findFirst()
+                    .orElse(null);
+        }
+        return null;
+    }
+
+    private String getCurrentUserEmail(Player player) {
+        if (player != null && player.getEmail() != null && !player.getEmail().isBlank()) {
+            return player.getEmail();
+        }
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof org.springframework.security.oauth2.core.user.OAuth2User oauthUser) {
+            return oauthUser.getAttribute("email");
+        }
+        return null;
     }
 }

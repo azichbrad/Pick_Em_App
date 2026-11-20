@@ -89,7 +89,7 @@ public class LeaderboardView extends VerticalLayout implements HasUrlParameter<L
         unitStakeField.addValueChangeListener(e -> refreshGrid());
 
         // --- Loss Penalty Rate Toggle (25¢ / 50¢ / $1) ---
-        lossRateGroup.setLabel("Loss Penalty");
+        lossRateGroup.setLabel("League Penance");
         lossRateGroup.setItems(0.25, 0.50, 1.00);
         lossRateGroup.setValue(1.00);
         lossRateGroup.setItemLabelGenerator(rate -> {

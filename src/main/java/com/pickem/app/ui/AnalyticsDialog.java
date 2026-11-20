@@ -6,6 +6,9 @@ import com.pickem.app.model.TeamAtsSplit;
 import com.pickem.app.service.game.GameAnalyticsService;
 import com.pickem.app.service.game.GameAnalyticsService.MatchupAnalyticsDTO;
 import com.pickem.app.service.game.GameAnalyticsService.TeamStatRankDTO;
+import com.pickem.app.service.billing.StripeCheckoutService;
+import com.vaadin.flow.component.UI;
+import com.vaadin.flow.component.notification.NotificationVariant;
 import com.pickem.app.service.game.TeamAtsService;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
@@ -54,6 +57,10 @@ public class AnalyticsDialog extends Dialog {
     private final String weekLabel;
     private final boolean isPremium;
     private final TeamAtsService teamAtsService;
+    private final StripeCheckoutService stripeCheckoutService;
+    private final Long leagueId;
+    private final Long playerId;
+    private final String userEmail;
     private final List<TeamStatRankDTO> teamStats;
     private final List<MatchupAnalyticsDTO> matchups;
     private final Map<String, String> logoByTeamLower = new HashMap<>();
@@ -72,11 +79,15 @@ public class AnalyticsDialog extends Dialog {
                            boolean isPremium,
                            List<Game> weeklyGames,
                            GameAnalyticsService analyticsService,
-                           TeamAtsService teamAtsService) {
+                           TeamAtsService teamAtsService, StripeCheckoutService stripeCheckoutService, Long leagueId, Long playerId, String userEmail) {
         this.sport = sport;
         this.weekLabel = weekLabel;
         this.isPremium = isPremium;
         this.teamAtsService = teamAtsService;
+        this.stripeCheckoutService = stripeCheckoutService;
+        this.leagueId = leagueId;
+        this.playerId = playerId;
+        this.userEmail = userEmail;
         this.teamStats = analyticsService.getTeamStatsForSport(sport);
         this.matchups = analyticsService.getMatchupAnalyticsForGames(weeklyGames);
 
@@ -874,7 +885,66 @@ public class AnalyticsDialog extends Dialog {
     }
 
     private void openUnlockModal() {
-        Notification.show("PRO Unlock coming soon! Contact your commissioner to activate.", 4000, Notification.Position.MIDDLE);
+        if (stripeCheckoutService == null) {
+            Notification.show("Billing is not configured yet.", 4000, Notification.Position.MIDDLE);
+            return;
+        }
+
+        // If only League PRO is configured, go straight to Stripe Checkout
+        if (!stripeCheckoutService.isPlayerProEnabled()) {
+            launchCheckout(true);
+            return;
+        }
+
+        // If both League PRO and Player PRO are configured, let the user choose
+        Dialog chooser = new Dialog();
+        chooser.addThemeName(Lumo.DARK);
+        chooser.setHeaderTitle("Choose PRO Plan");
+
+        Button leagueBtn = new Button("Unlock for Entire League ($20)", e -> {
+            chooser.close();
+            launchCheckout(true);
+        });
+        leagueBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+        leagueBtn.setWidthFull();
+
+        Button playerBtn = new Button("Unlock for Just Me", e -> {
+            chooser.close();
+            launchCheckout(false);
+        });
+        playerBtn.setWidthFull();
+
+        VerticalLayout options = new VerticalLayout(leagueBtn, playerBtn);
+        options.setPadding(false);
+        chooser.add(options);
+        chooser.open();
+    }
+
+    private void launchCheckout(boolean isLeagueScope) {
+        try {
+            String checkoutUrl;
+            if (isLeagueScope) {
+                if (leagueId == null) {
+                    Notification.show("No active league found.", 4000, Notification.Position.MIDDLE);
+                    return;
+                }
+                checkoutUrl = stripeCheckoutService.createLeagueProCheckoutUrl(leagueId, userEmail);
+            } else {
+                if (playerId == null) {
+                    Notification.show("Could not identify your player profile.", 4000, Notification.Position.MIDDLE);
+                    return;
+                }
+                checkoutUrl = stripeCheckoutService.createPlayerProCheckoutUrl(playerId, userEmail);
+            }
+            UI.getCurrent().getPage().setLocation(checkoutUrl);
+        } catch (Exception ex) {
+            Notification err = Notification.show(
+                    "Unable to start checkout: " + ex.getMessage(),
+                    5000,
+                    Notification.Position.MIDDLE
+            );
+            err.addThemeVariants(NotificationVariant.LUMO_ERROR);
+        }
     }
 
     // ==================== FORMATTING HELPERS ====================

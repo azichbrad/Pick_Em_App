@@ -12,7 +12,8 @@ import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.html.H1;
 import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
-import com.vaadin.flow.component.orderedlayout.FlexComponent;
+import com.vaadin.flow.server.VaadinServletRequest;
+import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.router.Route;
@@ -48,14 +49,11 @@ public class DashboardView extends VerticalLayout {
         header.setPadding(true);
 
         Button logoutBtn = new Button("Sign Out", e -> {
-            // Clear Spring Security context
-            org.springframework.security.core.context.SecurityContextHolder.clearContext();
-
-            // Invalidate the Vaadin session
-            com.vaadin.flow.server.VaadinSession.getCurrent().getSession().invalidate();
-
-            // Redirect to the root (forces re-authentication)
-            com.vaadin.flow.component.UI.getCurrent().getPage().setLocation("/");
+            UI.getCurrent().getPage().setLocation("/");
+            SecurityContextLogoutHandler logoutHandler = new SecurityContextLogoutHandler();
+            logoutHandler.logout(
+                    VaadinServletRequest.getCurrent().getHttpServletRequest(), null, null
+            );
         });
         logoutBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
         logoutBtn.getStyle().set("color", "#ef4444");

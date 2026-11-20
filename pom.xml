@@ -58,6 +58,13 @@
                 <artifactId>springboot3-dotenv</artifactId>
                 <version>5.1.0</version>
             </dependency>
+
+        <!-- Stripe Java SDK -->
+        <dependency>
+            <groupId>com.stripe</groupId>
+            <artifactId>stripe-java</artifactId>
+            <version>34.1.0</version>
+        </dependency>
     </dependencies>
 
     <dependencyManagement>
