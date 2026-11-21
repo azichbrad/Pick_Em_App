@@ -9,6 +9,7 @@ import com.pickem.app.repository.PlayerRepository;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
+import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.H1;
 import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
@@ -18,6 +19,9 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.server.VaadinSession;
+import com.vaadin.flow.component.dialog.Dialog;
+import com.vaadin.flow.component.textfield.TextField;
+import com.vaadin.flow.theme.lumo.Lumo;
 import jakarta.annotation.security.PermitAll;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.user.OAuth2User;
@@ -25,6 +29,7 @@ import org.springframework.security.oauth2.core.user.OAuth2User;
 import java.util.List;
 
 @Route("")
+@CssImport("./styles.css")
 @PermitAll
 public class DashboardView extends VerticalLayout {
 
@@ -37,7 +42,12 @@ public class DashboardView extends VerticalLayout {
         this.leagueMemberRepo = leagueMemberRepo;
         this.leagueRepo = leagueRepo;
 
-        setSizeFull();
+        setWidthFull();
+        setMinHeight("100dvh");
+        getStyle()
+                .set("background-color", "#0b0f19")
+                .set("padding-bottom", "32px")
+                .set("box-sizing", "border-box");
         setAlignItems(Alignment.CENTER);
         getStyle().set("background-color", "#0b0f19");
         getElement().setAttribute("theme", "dark");
@@ -115,9 +125,7 @@ public class DashboardView extends VerticalLayout {
         Button joinLeagueBtn = new Button("Join League");
         joinLeagueBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
         joinLeagueBtn.getStyle().set("color", "#10b981");
-        joinLeagueBtn.addClickListener(e -> {
-            com.vaadin.flow.component.notification.Notification.show("Join League prompt coming soon!");
-        });
+        joinLeagueBtn.addClickListener(e -> openJoinLeagueDialog());
 
         Button createLeagueBtn = new Button("+ Create New League");
         createLeagueBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
@@ -152,7 +160,9 @@ public class DashboardView extends VerticalLayout {
                 .set("border", "1px solid #22304d")
                 .set("border-radius", "16px")
                 .set("padding", "24px")
-                .set("width", "400px")
+                .set("width", "100%")
+                .set("max-width", "400px")
+                .set("box-sizing", "border-box")
                 .set("box-shadow", "0 4px 12px rgba(0,0,0,0.3)")
                 .set("margin-bottom", "15px");
         card.setSpacing(true);
@@ -188,5 +198,47 @@ public class DashboardView extends VerticalLayout {
 
         card.add(leagueTitle, leagueDetails, buttonLayout);
         return card;
+    }
+
+    private void openJoinLeagueDialog() {
+        Dialog dialog = new Dialog();
+        dialog.setHeaderTitle("Join a League");
+        dialog.getElement().setAttribute("theme", Lumo.DARK);
+        dialog.setWidth("380px");
+        dialog.setMaxWidth("92vw");
+
+        TextField inputField = new TextField("Invite Link or Code");
+        inputField.setPlaceholder("Paste invite link or 6-letter code");
+        inputField.setWidthFull();
+        inputField.focus();
+
+        Button continueBtn = new Button("Continue", e -> {
+            String raw = inputField.getValue() != null ? inputField.getValue().trim() : "";
+            if (raw.isEmpty()) {
+                inputField.setInvalid(true);
+                inputField.setErrorMessage("Please enter an invite link or code");
+                return;
+            }
+
+            // Accept either a full URL (https://.../join/95HXSZ) or a bare code (95HXSZ)
+            if (raw.contains("/join/")) {
+                raw = raw.substring(raw.lastIndexOf("/join/") + 6);
+            }
+            int qIdx = raw.indexOf('?');
+            if (qIdx != -1) {
+                raw = raw.substring(0, qIdx);
+            }
+            String cleanCode = raw.replace("/", "").trim().toUpperCase();
+
+            dialog.close();
+            UI.getCurrent().navigate(JoinLeagueView.class, cleanCode);
+        });
+        continueBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+
+        Button cancelBtn = new Button("Cancel", e -> dialog.close());
+
+        dialog.add(inputField);
+        dialog.getFooter().add(cancelBtn, continueBtn);
+        dialog.open();
     }
 }

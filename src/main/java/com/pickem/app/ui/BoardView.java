@@ -649,24 +649,61 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                         slotButton.addClassName("filled-slot-btn");
                     }
                 }
+                Player loggedInPlayer = findCurrentPlayer();
+                boolean isOwnPick = (loggedInPlayer != null && loggedInPlayer.getId().equals(player.getId()))
+                        || (!loggedInUserLower.isEmpty() && player.getName() != null
+                        && (loggedInUserLower.contains(player.getName().toLowerCase())
+                        || player.getName().toLowerCase().contains(loggedInUserLower)));
 
-                boolean isOwnPick = currentUser != null && player.getName().equalsIgnoreCase(currentUser);
-
-                // --- NEW ADMIN OVERRIDE CHECK ---
-                // If the logged-in user is the league admin, we ignore the weekLocked and gameLocked booleans
                 boolean effectiveWeekLocked = weekLocked && !isLeagueAdmin;
                 boolean effectiveGameLocked = gameLocked && !isLeagueAdmin;
 
+                // --- EMPTY SLOT PLACEHOLDER STYLING ---
+                if (existingPick == null) {
+                    slotButton.getStyle()
+                            .set("border-radius", "10px")
+                            .set("font-size", "0.875rem")
+                            .set("font-weight", "500");
+
+                    if (effectiveWeekLocked) {
+                        slotButton.setText("🔒 Pick " + currentSlot + " — Locked");
+                        slotButton.getStyle()
+                                .set("color", "#475569")
+                                .set("background-color", "rgba(15, 23, 42, 0.5)")
+                                .set("border", "1px dashed #1e293b");
+                    } else if (isOwnPick) {
+                        slotButton.setText("+ Make Pick " + currentSlot);
+                        slotButton.addClassName("empty-pick-slot-editable");
+                        slotButton.getStyle()
+                                .set("color", "#94a3b8")
+                                .set("background-color", "rgba(30, 41, 59, 0.35)")
+                                .set("border", "1.5px dashed #334155");
+                    } else if (isLeagueAdmin) {
+                        slotButton.setText("+ Add Pick " + currentSlot + " (Admin)");
+                        slotButton.addClassName("empty-pick-slot-editable");
+                        slotButton.getStyle()
+                                .set("color", "#64748b")
+                                .set("background-color", "rgba(30, 41, 59, 0.25)")
+                                .set("border", "1.5px dashed #334155");
+                    } else {
+                        slotButton.setText("Pick " + currentSlot + " — Pending");
+                        slotButton.getStyle()
+                                .set("color", "#475569")
+                                .set("background-color", "rgba(15, 23, 42, 0.35)")
+                                .set("border", "1px dashed #1e293b");
+                    }
+                }
+
                 // --- SLOT CLICK ROUTING ---
                 if (existingPick != null && isLeagueAdmin) {
-                    // 1. COMMISSIONER MODE (FILLED SLOT): Click any filled slot for the Admin Override + Swap option
+                    // 1. COMMISSIONER MODE (FILLED SLOT): Admin override + swap option
                     slotButton.getStyle().set("cursor", "pointer");
                     slotButton.addClickListener(event -> {
                         AdminPickEditDialog dialog = new AdminPickEditDialog(
                                 existingPick,
                                 pickRepo,
                                 () -> renderPlayerColumns(boardGrid, sport, selectedWeek),
-                                () -> { // The Swap Action
+                                () -> {
                                     PickSelectionDialog pickDialog = new PickSelectionDialog(
                                             player, leagueId, currentSlot, sport, selectedWeek,
                                             oddsService, pickService, conferenceService, gameSyncService,
@@ -680,26 +717,8 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                 } else if (effectiveWeekLocked || effectiveGameLocked) {
                     // 2. LOCKED OUT (STANDARD USER): Games have started or week is over
                     slotButton.getStyle().set("cursor", "default");
-                    if (effectiveWeekLocked && existingPick == null) {
-                        slotButton.setText("🔒 Locked");
-                        slotButton.getStyle()
-                                .set("color", "#475569")
-                                .set("background-color", "#0f172a")
-                                .set("border", "1px dashed #334155");
-                    }
-                } else if (existingPick == null && isLeagueAdmin) {
-                    // 3. COMMISSIONER MODE (EMPTY SLOT): Admin filling an empty slot for a user, ignoring time locks
-                    slotButton.getStyle().set("cursor", "pointer");
-                    slotButton.addClickListener(event -> {
-                        PickSelectionDialog dialog = new PickSelectionDialog(
-                                player, leagueId, currentSlot, sport, selectedWeek,
-                                oddsService, pickService, conferenceService, gameSyncService,
-                                () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
-                        );
-                        dialog.open();
-                    });
-                } else if (existingPick == null || isOwnPick) {
-                    // 4. STANDARD USER: Open a new slot, OR change their own unlocked pick
+                } else if (isOwnPick || isLeagueAdmin) {
+                    // 3. OWNER OR ADMIN: Fill an empty slot or swap an unlocked pick
                     slotButton.getStyle().set("cursor", "pointer");
                     slotButton.addClickListener(event -> {
                         PickSelectionDialog dialog = new PickSelectionDialog(
@@ -710,15 +729,8 @@ public class BoardView extends VerticalLayout implements BeforeEnterObserver {
                         dialog.open();
                     });
                 } else {
-                    // 5. VIEWING ANOTHER PLAYER'S UNLOCKED PICK
-                    slotButton.addClickListener(event -> {
-                        PickSelectionDialog dialog = new PickSelectionDialog(
-                                player, leagueId, currentSlot, sport, selectedWeek,
-                                oddsService, pickService, conferenceService, gameSyncService,
-                                () -> renderPlayerColumns(boardGrid, sport, selectedWeek)
-                        );
-                        dialog.open();
-                    });
+                    // 4. VIEWING ANOTHER PLAYER'S SLOT (READ-ONLY)
+                    slotButton.getStyle().set("cursor", "default");
                 }
 
                 playerCard.add(slotButton);

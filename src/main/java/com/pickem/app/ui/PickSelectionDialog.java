@@ -69,24 +69,27 @@ public class PickSelectionDialog extends Dialog {
         List<Game> fetchedGames = gameSyncService.getGamesForSportAndWeekFromDb(sport, weekNumber);
         this.games = fetchedGames != null ? fetchedGames : List.of();
 
-        // Pass both dark mode and our custom mobile fullscreen trigger
-        getElement().setAttribute("theme", "dark fullscreen-mobile");
+        getElement().setAttribute("theme", "dark");
 
         setHeaderTitle("Select Pick for " + player.getName() + " (Slot " + slotNumber + ")");
+        setWidth("min(96vw, 560px)");
+        setHeight("85dvh");
+        setMaxHeight("88dvh");
+        setCloseOnOutsideClick(true);
+        setCloseOnEsc(true);
 
-        // Let the CSS media query handle mobile expansion natively
-        setWidth("100%");
-        setMaxWidth("560px");
-        setMaxHeight("92vh");
+        // Pin an X close button in the static header
+        Button closeBtn = new Button(VaadinIcon.CLOSE.create(), e -> close());
+        closeBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_ICON);
+        getHeader().add(closeBtn);
 
         gameListContainer.setSizeFull();
+        gameListContainer.setMinHeight("0");
         gameListContainer.getStyle()
                 .set("overflow-y", "auto")
                 .set("padding-right", "2px")
-                .set("padding-bottom", "40px")
-                // Enable buttery smooth native momentum scrolling on iOS/Android
+                .set("padding-bottom", "24px")
                 .set("-webkit-overflow-scrolling", "touch")
-                // Prevent pulling the outer body when reaching the top/bottom of the list
                 .set("overscroll-behavior", "contain");
 
         // Mobile responsiveness override: adapt dialog overlay when on phone viewports

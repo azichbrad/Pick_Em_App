@@ -9,7 +9,17 @@
     --text-muted: #94a3b8;
 }
 
-/* Empty slot button */
+/* Eliminates the white bar when scrolling past viewport height or rubber-banding on mobile */
+html, body {
+    background-color: #0b0f19 !important;
+    color-scheme: dark;
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    overflow-x: hidden;
+}
+
+/* --- EMPTY PICK SLOTS --- */
 .empty-slot-btn {
     background: transparent !important;
     border: 1.5px dashed var(--card-border) !important;
@@ -24,14 +34,32 @@
     background: rgba(59, 130, 246, 0.05) !important;
 }
 
-/* Locked-in Pick button */
+.empty-pick-slot-editable {
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.empty-pick-slot-editable:hover {
+    border-color: #3b82f6 !important;
+    background-color: rgba(59, 130, 246, 0.12) !important;
+    color: #e2e8f0 !important;
+}
+
+/* --- FILLED & GRADED PICK BUTTONS --- */
 .filled-slot-btn {
     background: #1e293b !important;
     border: 1px solid var(--accent-blue) !important;
     color: var(--text-primary) !important;
-    font-weight: 600 !important;
+    font-weight: 500 !important;
+    font-size: 0.85rem !important;
     border-radius: 10px !important;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    width: 100% !important;
+    height: auto !important;
+    min-height: 64px !important;
+    padding: 8px !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
     transition: transform 0.15s ease-in-out;
 }
 
@@ -39,23 +67,11 @@
     transform: translateY(-2px);
 }
 
-/* Odds button in modal */
-.odds-btn {
-    background: #1e293b !important;
-    border: 1px solid #334155 !important;
-    color: #38bdf8 !important;
-    font-weight: 700 !important;
-    border-radius: 8px !important;
-    transition: all 0.15s ease;
+.filled-slot-btn::part(prefix) {
+    width: 100%;
+    display: flex;
 }
 
-.odds-btn:hover {
-    background: var(--accent-blue) !important;
-    color: #ffffff !important;
-    border-color: var(--accent-blue) !important;
-}
-
-/* Graded Pick States */
 .pick-win {
     background: rgba(16, 185, 129, 0.15) !important;
     border: 1px solid var(--accent-green) !important;
@@ -71,7 +87,7 @@
     font-weight: 600 !important;
     border-radius: 10px !important;
     opacity: 0.75;
-    text-decoration: line-through; /* Optional: crosses out the losing pick */
+    text-decoration: line-through;
 }
 
 .pick-push {
@@ -80,62 +96,6 @@
     color: #94a3b8 !important;
     font-weight: 600 !important;
     border-radius: 10px !important;
-}
-
-/* Better spacing and sizing for filled pick buttons */
-.filled-slot-btn {
-    background: #1e293b !important;
-    border: 1px solid var(--accent-blue) !important;
-    color: var(--text-primary) !important;
-    font-weight: 500 !important;
-    font-size: 0.85rem !important;
-    border-radius: 10px !important;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-    padding: 0 10px !important;
-    display: flex !important;
-    justify-content: space-between !important;
-    align-items: center !important;
-}
-
-.filled-slot-btn span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.pick-line-badge {
-    background: rgba(59, 130, 246, 0.2);
-    color: #60a5fa;
-    font-weight: 700;
-    padding: 2px 6px;
-    border-radius: 6px;
-    font-size: 0.8rem;
-    margin-left: auto;
-    flex-shrink: 0;
-}
-
-.filled-slot-btn span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* --- VAADIN BUTTON OVERRIDES --- */
-.filled-slot-btn {
-    background: #1e293b !important;
-    border: 1px solid var(--accent-blue) !important;
-    color: var(--text-primary) !important;
-    border-radius: 10px !important;
-    width: 100% !important;
-    height: auto !important;
-    min-height: 64px !important;
-    padding: 8px !important;
-}
-
-/* Forces the Vaadin internal icon slot to span the full width */
-.filled-slot-btn::part(prefix) {
-    width: 100%;
-    display: flex;
 }
 
 /* --- PICK CARD LAYOUT --- */
@@ -149,13 +109,14 @@
 .pick-card-top {
     display: flex;
     align-items: center;
-    gap: 8px; /* Native spacing between logo and text */
+    gap: 8px;
     width: 100%;
+    overflow: hidden;
 }
 
 .pick-card-text {
-    white-space: normal !important; /* Forces the wrap */
-    overflow-wrap: anywhere !important; /* Prevents overflow */
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
     text-align: left;
     font-size: 0.85rem;
     line-height: 1.25;
@@ -178,12 +139,37 @@
     font-size: 0.8rem;
     padding: 2px 8px;
     border-radius: 6px;
+    margin-left: auto;
     flex-shrink: 0;
 }
 
-/* --- DIALOG BACKDROP & CONTAINER --- */
+/* --- ODDS BUTTONS --- */
+.odds-btn {
+    background: #1e293b !important;
+    color: #38bdf8 !important;
+    border: 1px solid #334155 !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    cursor: pointer !important;
+}
+
+.odds-btn:hover {
+    background: #2563eb !important;
+    color: #ffffff !important;
+    border-color: #60a5fa !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+}
+
+.odds-btn:active {
+    transform: scale(0.92) !important;
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.5) !important;
+}
+
+/* --- DIALOG BACKDROP, CONTAINER & SCROLLING --- */
 vaadin-dialog-overlay.pick-dialog-overlay::part(overlay) {
-    background: #0f172a !important; /* Deep slate matching your background */
+    background: #0f172a !important;
     border: 1px solid #1e293b;
     border-radius: 16px;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
@@ -197,68 +183,17 @@ vaadin-dialog-overlay.pick-dialog-overlay::part(header) {
     padding: 16px 20px;
 }
 
+vaadin-dialog-overlay.pick-dialog-overlay::part(content) {
+    padding: 20px !important;
+    overflow-y: auto !important;
+}
+
 vaadin-dialog-overlay.pick-dialog-overlay::part(footer) {
     background: #0b1120;
     border-top: 1px solid #1e293b;
     padding: 12px 20px;
 }
 
-/* --- MODAL POP-IN ANIMATION --- */
-@keyframes modalPopIn {
-    0% {
-        opacity: 0;
-        transform: scale(0.94) translateY(10px);
-    }
-    100% {
-        opacity: 1;
-        transform: scale(1) translateY(0);
-    }
-}
-
-/* --- TACTILE BUTTONS & DOPAMINE CLICK EFFECT --- */
-.odds-btn {
-    background: #1e293b !important;
-    color: #38bdf8 !important; /* Bright cyan text */
-    border: 1px solid #334155 !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    cursor: pointer !important;
-}
-
-.odds-btn:hover {
-    background: #2563eb !important; /* Vivid blue on hover */
-    color: #ffffff !important;
-    border-color: #60a5fa !important;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
-}
-
-.odds-btn:active {
-    transform: scale(0.92) !important; /* Satisfying spring bounce on click */
-    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.5) !important;
-}
-
-.pick-card-top {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    overflow: hidden;
-}
-
-.pick-card-top span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* --- CLEAN MODAL SCROLLING --- */
-vaadin-dialog-overlay.pick-dialog-overlay::part(content) {
-    padding: 20px !important;
-    overflow-y: auto !important; /* Let the dialog content handle the single clean scrollbar */
-}
-
-/* Custom sleek dark scrollbar for the modal */
 vaadin-dialog-overlay.pick-dialog-overlay ::-webkit-scrollbar {
     width: 6px;
 }
@@ -269,33 +204,4 @@ vaadin-dialog-overlay.pick-dialog-overlay ::-webkit-scrollbar-track {
 
 vaadin-dialog-overlay.pick-dialog-overlay ::-webkit-scrollbar-thumb {
     background: #334155;
-    border-radius: 4px;
-}
-
-vaadin-dialog-overlay.pick-dialog-overlay ::-webkit-scrollbar-thumb:hover {
-    background: #475569;
-}
-
-/* --- MOBILE FULLSCREEN DIALOG FIX --- */
-@media (max-width: 768px) {
-    /* Using the theme attribute ensures Vaadin actually applies the styles to the visual popup */
-    vaadin-dialog-overlay[theme~="fullscreen-mobile"]::part(overlay) {
-        width: 100vw !important;
-        max-width: 100vw !important;
-        min-width: 100vw !important;
-        height: 100dvh !important;
-        max-height: 100dvh !important;
-        min-height: 100dvh !important;
-        margin: 0 !important;
-        border-radius: 0 !important;
-        top: 0 !important;
-        left: 0 !important;
-    }
-
-    vaadin-dialog-overlay[theme~="fullscreen-mobile"]::part(content) {
-        padding: 12px 6px 0 6px !important;
-        height: 100% !important;
-        display: flex !important;
-        flex-direction: column !important;
-    }
-}
+    border-radius:

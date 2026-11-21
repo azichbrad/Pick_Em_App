@@ -117,9 +117,11 @@ public class AnalyticsDialog extends Dialog {
         this.matchupAtsSplits = teamAtsService.getSplitsByTeam(sport, CURRENT_SEASON, matchupTeams);
 
         addThemeName(Lumo.DARK);
-        setWidth("min(95vw, 680px)");
-        setMaxHeight("88vh");
+        setWidth("min(96vw, 680px)");
+        setHeight("85dvh");
+        setMaxHeight("88dvh");
         setCloseOnOutsideClick(true);
+        setCloseOnEsc(true);
 
         String displaySport = "NCAAF".equalsIgnoreCase(sport) ? "CFB" : "NFL";
         setHeaderTitle("📊 " + displaySport + " Analytics");
@@ -148,6 +150,11 @@ public class AnalyticsDialog extends Dialog {
         tabs.add("⚔️ " + weekLabel, buildMatchupsTab());
 
         add(tabs);
+
+        Button footerCloseBtn = new Button("Close", e -> close());
+        footerCloseBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
+        footerCloseBtn.getStyle().set("color", "#94a3b8");
+        getFooter().add(footerCloseBtn);
     }
 
     // ==================== TAB 1: TEAM RANKS ====================
